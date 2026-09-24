@@ -232,9 +232,13 @@ export default function App() {
                 <p className="text-center text-muted-foreground py-8">No tasks for this day.</p>
               ) : (
                 currentDayTasks.map(task => (
-                  <div key={task._id} className="flex items-center justify-between group">
-                    <div className="flex items-center gap-3">
+                  <div key={task._id} className="flex items-center justify-between group p-2 -mx-2 rounded-md hover:bg-muted/50 transition-colors">
+                    <label 
+                      htmlFor={`task-${task._id}`}
+                      className="flex items-center gap-3 flex-1 cursor-pointer"
+                    >
                       <Checkbox 
+                        id={`task-${task._id}`}
                         checked={task.completed} 
                         onCheckedChange={() => toggleTaskCompletion(task._id, task.completed)} 
                       />
@@ -248,7 +252,7 @@ export default function App() {
                       }`}>
                         {task.priority}
                       </span>
-                    </div>
+                    </label>
                     <Button variant="ghost" size="icon" className="opacity-0 group-hover:opacity-100" onClick={() => handleDeleteTask(task._id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
