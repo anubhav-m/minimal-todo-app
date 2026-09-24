@@ -4,10 +4,11 @@ import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { authenticate, getTasks, createTask, updateTask, deleteTask } from '@/lib/api';
 import { useTheme } from '@/components/ThemeProvider';
 import { format } from 'date-fns';
-import { Moon, Sun, Trash2, LogOut } from 'lucide-react';
+import { Moon, Sun, Trash2, LogOut, Calendar as CalendarIcon } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
@@ -16,6 +17,12 @@ export default function App() {
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const { theme, setTheme } = useTheme();
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+
+  const handleDateSelect = (newDate: Date | undefined) => {
+    setDate(newDate);
+    setIsCalendarOpen(false);
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('todo_token');
@@ -151,20 +158,37 @@ export default function App() {
       </header>
 
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-8">
-        <Card className="col-span-1 h-fit">
+        <Card className="hidden md:block col-span-1 h-fit">
           <CardContent className="p-4 flex justify-center">
             <Calendar
               mode="single"
               selected={date}
-              onSelect={setDate}
+              onSelect={handleDateSelect}
               className="rounded-md border"
             />
           </CardContent>
         </Card>
 
         <Card className="col-span-1 md:col-span-2">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle>{date ? format(date, 'MMMM do, yyyy') : 'Select a date'}</CardTitle>
+            <div className="md:hidden">
+              <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="flex gap-2">
+                    <CalendarIcon className="h-4 w-4" />
+                    <span>Calendar</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="end">
+                  <Calendar
+                    mode="single"
+                    selected={date}
+                    onSelect={handleDateSelect}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleAddTask} className="flex gap-2 mb-6">
