@@ -1,4 +1,4 @@
-# minimal-todo-app
+# Minimal Todo App
 
 A sleek, minimalistic Todo application built with the MERN stack (Vite React, Express, MongoDB) featuring a beautiful Shadcn UI interface.
 
@@ -8,7 +8,6 @@ A sleek, minimalistic Todo application built with the MERN stack (Vite React, Ex
 - **Task Rollover:** Uncompleted tasks automatically roll over to the current day.
 - **Dark/Light Mode:** Full theme support with a frosted glass toggle.
 - **Google Authentication:** Secure login system using Google OAuth.
-- **Minimalist Design:** Pill-shaped buttons and a modern, rounded aesthetic.
 
 ## Setup
 
@@ -19,7 +18,17 @@ A sleek, minimalistic Todo application built with the MERN stack (Vite React, Ex
    ```
 
 2. **Environment Variables:**
-   Create `.env` in the backend and `.env.local` in the frontend and configure them with your Google Client ID and MongoDB URI.
+   Create `.env` in the `backend` folder:
+   ```env
+   MONGO_URI=mongodb+srv://<your-username>:<your-password>@<cluster-url>/todo-app
+   GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+   ```
+
+   Create `.env.local` in the `frontend` folder:
+   ```env
+   VITE_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+   VITE_API_URL=http://localhost:5000/api
+   ```
 
 3. **Run the servers:**
    ```bash
