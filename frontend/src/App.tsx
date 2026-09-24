@@ -85,20 +85,34 @@ export default function App() {
   };
 
   const toggleTaskCompletion = async (id: string, completed: boolean) => {
+    // Optimistically update the UI
+    setTasks(prevTasks => prevTasks.map(t => t._id === id ? { ...t, completed: !completed } : t));
+
     try {
       const updated = await updateTask(id, { completed: !completed });
-      setTasks(tasks.map(t => t._id === id ? updated : t));
+      // Sync with backend response to ensure accuracy
+      setTasks(prevTasks => prevTasks.map(t => t._id === id ? updated : t));
     } catch (error) {
       console.error('Error updating task', error);
+      // Revert the UI update if the API call fails
+      setTasks(prevTasks => prevTasks.map(t => t._id === id ? { ...t, completed: completed } : t));
     }
   };
 
   const handleDeleteTask = async (id: string) => {
+    // Find the task before optimistically deleting it so we can revert if needed
+    const taskToDelete = tasks.find(t => t._id === id);
+    // Optimistically update the UI
+    setTasks(prevTasks => prevTasks.filter(t => t._id !== id));
+
     try {
       await deleteTask(id);
-      setTasks(tasks.filter(t => t._id !== id));
     } catch (error) {
       console.error('Error deleting task', error);
+      // Revert the UI update if the API call fails
+      if (taskToDelete) {
+        setTasks(prevTasks => [...prevTasks, taskToDelete]);
+      }
     }
   };
 
