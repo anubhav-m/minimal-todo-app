@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { authenticate, getTasks, createTask, updateTask, deleteTask } from '@/lib/api';
 import { useTheme } from '@/components/ThemeProvider';
-import { format, parseISO } from 'date-fns';
+import { format } from 'date-fns';
 import { Moon, Sun, Trash2, LogOut } from 'lucide-react';
 
 export default function App() {
