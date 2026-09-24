@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useGoogleLogin } from '@react-oauth/google';
+import { useGoogleLogin, googleLogout } from '@react-oauth/google';
 import { Calendar } from '@/components/ui/calendar';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -57,6 +57,7 @@ export default function App() {
   });
 
   const handleLogout = () => {
+    googleLogout();
     localStorage.removeItem('todo_token');
     setUser(null);
     setTasks([]);
