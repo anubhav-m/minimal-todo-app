@@ -56,6 +56,7 @@ export default function App() {
         const res = await authenticate(tokenResponse.access_token);
         localStorage.setItem('todo_token', tokenResponse.access_token);
         setUser(res.user);
+        setDate(new Date());
         fetchTasks();
       } catch (err) {
         console.error('Login failed on backend', err);
@@ -69,6 +70,7 @@ export default function App() {
     localStorage.removeItem('todo_token');
     setUser(null);
     setTasks([]);
+    setDate(new Date());
   };
 
   const handleAddTask = async (e: React.FormEvent) => {
