@@ -9,6 +9,16 @@ A sleek, minimalistic Todo application built with the MERN stack (Vite React, Ex
 - **Dark/Light Mode:** Full theme support with a frosted glass toggle.
 - **Google Authentication:** Secure login system using Google OAuth.
 
+## Screenshots
+
+<div align="center">
+  <img src="screenshots/login.png" alt="Login Screen" width="600" />
+  <br/><br/>
+  <img src="screenshots/desktop.png" alt="Desktop View" width="800" />
+  <br/><br/>
+  <img src="screenshots/mobile.png" alt="Mobile View" width="300" />
+</div>
+
 ## Setup
 
 1. **Install dependencies:**
