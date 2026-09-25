@@ -1,12 +1,10 @@
-const { OAuth2Client } = require('google-auth-library');
+import { ApiError } from '../utils/ApiError.js';
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-const verifyGoogleToken = async (req, res, next) => {
+export const verifyGoogleToken = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No token provided' });
+    if (!authHeader?.startsWith('Bearer ')) {
+      throw new ApiError(401, 'No token provided');
     }
 
     const token = authHeader.split(' ')[1];
@@ -17,7 +15,7 @@ const verifyGoogleToken = async (req, res, next) => {
     });
 
     if (!response.ok) {
-      throw new Error('Invalid Google access token');
+      throw new ApiError(401, 'Invalid Google access token');
     }
 
     const payload = await response.json();
@@ -25,9 +23,11 @@ const verifyGoogleToken = async (req, res, next) => {
     req.user = payload; // Attach google user payload to request
     next();
   } catch (error) {
-    console.error('Error verifying token:', error);
-    res.status(401).json({ error: 'Invalid token' });
+    // If it's already an ApiError, pass it along. Otherwise, it's a generic 401.
+    if (error instanceof ApiError) {
+      next(error);
+    } else {
+      next(new ApiError(401, 'Invalid token'));
+    }
   }
 };
-
-module.exports = { verifyGoogleToken };
