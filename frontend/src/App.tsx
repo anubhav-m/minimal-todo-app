@@ -10,10 +10,13 @@ import { useTheme } from '@/components/ThemeProvider';
 import { format } from 'date-fns';
 import { Moon, Sun, Trash2, LogOut, Calendar as CalendarIcon } from 'lucide-react';
 
+import { Skeleton } from '@/components/ui/skeleton';
+
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
   const [date, setDate] = useState<Date | undefined>(new Date());
   const [tasks, setTasks] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
   const { theme, setTheme } = useTheme();
@@ -30,10 +33,13 @@ export default function App() {
       // In a real app, we'd validate the token and get user details
       setUser({ name: 'User', email: '' });
       fetchTasks();
+    } else {
+      setIsLoading(false);
     }
   }, []);
 
   const fetchTasks = async () => {
+    setIsLoading(true);
     try {
       const localToday = format(new Date(), 'yyyy-MM-dd');
       const data = await getTasks(localToday);
@@ -43,6 +49,8 @@ export default function App() {
       if ((error as any).response?.status === 401) {
         handleLogout();
       }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -237,7 +245,25 @@ export default function App() {
             </form>
 
             <div className="space-y-4">
-              {currentDayTasks.length === 0 ? (
+              {isLoading ? (
+                <>
+                  <div className="flex items-center space-x-4 p-2 -mx-2">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="h-4 w-12 rounded-full" />
+                  </div>
+                  <div className="flex items-center space-x-4 p-2 -mx-2">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-4 w-[60%]" />
+                    <Skeleton className="h-4 w-12 rounded-full" />
+                  </div>
+                  <div className="flex items-center space-x-4 p-2 -mx-2">
+                    <Skeleton className="h-4 w-4 rounded-sm" />
+                    <Skeleton className="h-4 w-[40%]" />
+                    <Skeleton className="h-4 w-12 rounded-full" />
+                  </div>
+                </>
+              ) : currentDayTasks.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">No tasks for this day.</p>
               ) : (
                 currentDayTasks.map(task => (
