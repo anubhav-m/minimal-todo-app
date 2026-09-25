@@ -202,7 +202,9 @@ export default function App() {
 
         <Card className="col-span-1 md:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-            <CardTitle>{date ? format(date, 'MMMM do, yyyy') : 'Select a date'}</CardTitle>
+            <CardTitle key={`title-${selectedDateStr}`} className="animate-in fade-in slide-in-from-left-2 duration-300">
+              {date ? format(date, 'MMMM do, yyyy') : 'Select a date'}
+            </CardTitle>
             <div className="md:hidden">
               <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                 <PopoverTrigger asChild>
@@ -244,7 +246,7 @@ export default function App() {
               </div>
             </form>
 
-            <div className="space-y-4">
+            <div key={selectedDateStr} className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
               {isLoading ? (
                 <>
                   <div className="flex items-center space-x-4 p-2 -mx-2">
