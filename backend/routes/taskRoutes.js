@@ -11,8 +11,8 @@ router.get('/', verifyGoogleToken, async (req, res) => {
     const user = await User.findOne({ googleId });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Handle rollover: move uncompleted past tasks to today
-    const today = new Date().toISOString().split('T')[0];
+    // Handle rollover: move uncompleted past tasks to local today
+    const today = req.query.localDate || new Date().toISOString().split('T')[0];
     
     await Task.updateMany(
       { 

@@ -35,7 +35,8 @@ export default function App() {
 
   const fetchTasks = async () => {
     try {
-      const data = await getTasks();
+      const localToday = format(new Date(), 'yyyy-MM-dd');
+      const data = await getTasks(localToday);
       setTasks(data);
     } catch (error) {
       console.error('Error fetching tasks', error);

@@ -21,8 +21,9 @@ export const authenticate = async (googleToken: string) => {
   return response.data;
 };
 
-export const getTasks = async () => {
-  const response = await api.get('/tasks');
+export const getTasks = async (localDate?: string) => {
+  const url = localDate ? `/tasks?localDate=${localDate}` : '/tasks';
+  const response = await api.get(url);
   return response.data;
 };
 
