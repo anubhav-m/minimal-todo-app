@@ -31,6 +31,16 @@
           "image": "./assets/images/logo.png",
           "imageWidth": 200
         }
+      ],
+      "./withSplitApk.js",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
       ]
     ],
     "experiments": {
