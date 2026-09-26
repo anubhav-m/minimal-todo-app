@@ -19,7 +19,7 @@ export default function Index() {
 }
 
 function LoginScreen() {
-  const { signIn } = useAuth();
+  const { signIn, isSigningIn } = useAuth();
 
   return (
     <View className="flex-1 items-center justify-center bg-background p-4">
@@ -39,13 +39,20 @@ function LoginScreen() {
         </View>
 
         <Pressable 
-          className="w-full bg-primary py-4 rounded-full flex-row justify-center items-center"
+          className={`w-full bg-primary py-4 rounded-full flex-row justify-center items-center ${isSigningIn ? 'opacity-70' : ''}`}
           onPress={signIn}
+          disabled={isSigningIn}
         >
-          <GoogleIcon size={20} />
-          <Text className="text-primary-foreground font-semibold text-base ml-3">
-            Sign in with Google
-          </Text>
+          {isSigningIn ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <>
+              <GoogleIcon size={20} />
+              <Text className="text-primary-foreground font-semibold text-base ml-3">
+                Sign in with Google
+              </Text>
+            </>
+          )}
         </Pressable>
 
         <Text className="text-xs text-muted-foreground text-center mt-6">

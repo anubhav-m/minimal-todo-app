@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { authenticate } from '../api/api';
@@ -12,6 +13,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  isSigningIn: boolean;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -26,6 +28,7 @@ GoogleSignin.configure({
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
   useEffect(() => {
     checkToken();
@@ -85,6 +88,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signIn = async () => {
+    setIsSigningIn(true);
     try {
       await GoogleSignin.hasPlayServices();
       const userInfo = await GoogleSignin.signIn();
@@ -96,15 +100,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(res.user);
       }
     } catch (error: any) {
-      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
-        // user cancelled the login flow
+      console.error('Raw Login Error:', error);
+      
+      if (error.code === statusCodes.SIGN_IN_CANCELLED || error.code === '12501') {
+        Alert.alert('Sign In Cancelled', 'The sign in flow was cancelled. If you did not cancel it, please check your internet connection.');
       } else if (error.code === statusCodes.IN_PROGRESS) {
-        // operation (e.g. sign in) is in progress already
+        Alert.alert('Please Wait', 'Sign in is already in progress.');
       } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        // play services not available or outdated
+        Alert.alert('Error', 'Google Play Services are not available on this device.');
       } else {
-        console.error('Login error:', error);
+        const errorMessage = error.message || 'We could not sign you in. Please check your internet connection and try again.';
+        Alert.alert(`Sign In Failed (${error.code || 'unknown'})`, errorMessage);
       }
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -119,7 +128,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, isLoading, isSigningIn, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

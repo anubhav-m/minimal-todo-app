@@ -98,8 +98,9 @@ export default function TodoScreen() {
     try {
       const data = await getTasks();
       setTasks(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching tasks', error);
+      Alert.alert('Network Error', 'Failed to load your tasks. Please check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
@@ -121,35 +122,6 @@ export default function TodoScreen() {
       completed: false 
     };
     
-    setTasks([...tasks, tempTask]);
-    
-    // Schedule notification if requested
-    if (notifyMe && newTaskTime) {
-      const notificationDate = new Date(date);
-      notificationDate.setHours(newTaskTime.getHours(), newTaskTime.getMinutes(), 0, 0);
-      
-      const secondsRemaining = Math.floor((notificationDate.getTime() - new Date().getTime()) / 1000);
-
-      if (secondsRemaining > 0) {
-        try {
-          await Notifications.scheduleNotificationAsync({
-            content: {
-              title: "Todo Reminder",
-              body: newTaskText,
-              sound: true,
-            },
-            trigger: { 
-              type: Notifications.SchedulableTriggerInputTypes.DATE,
-              date: notificationDate, // explicitly pass the absolute date object
-              channelId: 'default'
-            },
-          });
-        } catch (e) {
-          console.error("Failed to schedule notification", e);
-        }
-      }
-    }
-
     // Reset form
     setNewTaskText('');
     setNewTaskPriority('none');
@@ -165,10 +137,38 @@ export default function TodoScreen() {
         notify: tempTask.notify,
         priority: tempTask.priority 
       });
-      setTasks(current => current.map(t => t._id === tempId ? newTask : t));
-    } catch (error) {
+      setTasks(current => [...current, newTask]);
+
+      // Schedule notification if requested
+      if (tempTask.notify && tempTask.time) {
+        const notificationDate = new Date(date);
+        const parsedTime = new Date(`1970-01-01T${format(newTaskTime!, 'HH:mm:00')}`);
+        notificationDate.setHours(parsedTime.getHours(), parsedTime.getMinutes(), 0, 0);
+        
+        const secondsRemaining = Math.floor((notificationDate.getTime() - new Date().getTime()) / 1000);
+
+        if (secondsRemaining > 0) {
+          try {
+            await Notifications.scheduleNotificationAsync({
+              content: {
+                title: "Todo Reminder",
+                body: tempTask.text,
+                sound: true,
+              },
+              trigger: { 
+                type: Notifications.SchedulableTriggerInputTypes.DATE,
+                date: notificationDate, // explicitly pass the absolute date object
+                channelId: 'default'
+              },
+            });
+          } catch (e) {
+            console.error("Failed to schedule notification", e);
+          }
+        }
+      }
+    } catch (error: any) {
       console.error('Error creating task', error);
-      setTasks(current => current.filter(t => t._id !== tempId));
+      Alert.alert('Error', 'Failed to save the task. Please try again.');
     }
   };
 
@@ -176,9 +176,10 @@ export default function TodoScreen() {
     setTasks(current => current.map(t => t._id === id ? { ...t, completed: !completed } : t));
     try {
       await updateTask(id, { completed: !completed });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating task', error);
       setTasks(current => current.map(t => t._id === id ? { ...t, completed } : t)); // rollback
+      Alert.alert('Error', 'Failed to update the task. Please check your connection.');
     }
   };
 
@@ -187,9 +188,10 @@ export default function TodoScreen() {
     setTasks(current => current.filter(t => t._id !== id));
     try {
       await deleteTask(id);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting task', error);
       if (taskToDelete) setTasks(current => [...current, taskToDelete]); // rollback
+      Alert.alert('Error', 'Failed to delete the task. Please try again.');
     }
   };
 
@@ -227,6 +229,8 @@ export default function TodoScreen() {
 
       <FlatList
         className="flex-1 px-4 pt-4"
+        contentContainerStyle={{ paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
         data={(isLoading || isFlipping) ? [1, 2, 3, 4] : currentDayTasks}
         keyExtractor={(item, index) => (isLoading || isFlipping) ? `skeleton-${index}` : item._id}
         ListHeaderComponent={
@@ -253,28 +257,30 @@ export default function TodoScreen() {
 
             {selectedDateStr >= todayStr && (
               <View className="bg-card p-4 rounded-2xl border border-border">
-                <View className="flex-row items-center border border-input rounded-xl px-4 bg-background mb-4">
-                  <TextInput
-                    className="flex-1 h-12 text-foreground"
-                    placeholder="Add a new task..."
-                    placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
-                    value={newTaskText}
-                    onChangeText={setNewTaskText}
-                    onSubmitEditing={handleAddTask}
-                  />
+                <View className="flex-row items-center mb-4">
+                  <View className="flex-1 border border-input rounded-xl px-4 bg-background h-14 justify-center mr-3">
+                    <TextInput
+                      className="flex-1 text-base text-foreground"
+                      placeholder="Add a new task..."
+                      placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
+                      value={newTaskText}
+                      onChangeText={setNewTaskText}
+                      onSubmitEditing={handleAddTask}
+                    />
+                  </View>
                   <Pressable 
                     onPress={handleAddTask}
-                    className="w-8 h-8 bg-primary rounded-full items-center justify-center ml-2"
+                    className="w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-sm"
                   >
-                    <Text className="text-primary-foreground font-bold text-lg leading-none">+</Text>
+                    <Text className="text-primary-foreground font-bold text-3xl leading-none">+</Text>
                   </Pressable>
                 </View>
                 
-                <View className="flex-row items-center flex-wrap gap-2">
+                <View className="flex-row items-center flex-wrap gap-3">
                   {newTaskTime ? (
-                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-3 pr-1 h-8">
+                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-4 pr-1.5 h-10">
                       <Pressable onPress={() => setShowTimePicker(true)} hitSlop={10}>
-                        <Text className="text-xs font-semibold text-foreground mr-2">
+                        <Text className="text-sm font-semibold text-foreground mr-2">
                           {format(newTaskTime, 'h:mm a')}
                         </Text>
                       </Pressable>
@@ -284,7 +290,7 @@ export default function TodoScreen() {
                         hitSlop={10}
                       >
                         <Bell 
-                          size={14} 
+                          size={16} 
                           color={notifyMe ? (isDark ? '#3b82f6' : '#2563eb') : (isDark ? '#64748b' : '#94a3b8')} 
                         />
                       </Pressable>
@@ -293,7 +299,7 @@ export default function TodoScreen() {
                           setNewTaskTime(null);
                           setNotifyMe(false);
                         }}
-                        className="w-5 h-5 items-center justify-center bg-background rounded-full"
+                        className="w-6 h-6 items-center justify-center bg-background rounded-full"
                       >
                         <Text className="text-muted-foreground font-bold text-xs leading-none">✕</Text>
                       </Pressable>
@@ -301,31 +307,31 @@ export default function TodoScreen() {
                   ) : (
                     <Pressable 
                       onPress={() => setShowTimePicker(true)}
-                      className="bg-muted px-3 h-8 justify-center rounded-full border border-border"
+                      className="bg-muted px-4 h-10 justify-center rounded-full border border-border"
                     >
-                      <Text className="text-xs font-semibold text-muted-foreground">+ Time</Text>
+                      <Text numberOfLines={1} className="text-sm font-semibold text-muted-foreground">+ Time</Text>
                     </Pressable>
                   )}
 
-                  {!isPriorityActive && newTaskPriority === 'none' && (
+                  {newTaskPriority === 'none' && (
                     <Pressable 
                       onPress={() => setIsPriorityActive(true)}
-                      className="bg-muted px-3 h-8 justify-center rounded-full border border-border"
+                      className="bg-muted px-4 h-10 justify-center rounded-full border border-border"
                     >
-                      <Text className="text-xs font-semibold text-muted-foreground">+ Priority</Text>
+                      <Text numberOfLines={1} className="text-sm font-semibold text-muted-foreground">+ Priority</Text>
                     </Pressable>
                   )}
 
-                  {!isPriorityActive && newTaskPriority !== 'none' && (
-                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-3 pr-1 h-8">
+                  {newTaskPriority !== 'none' && (
+                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-4 pr-1.5 h-10">
                       <Pressable onPress={() => setIsPriorityActive(true)} hitSlop={10}>
-                        <Text className="text-xs font-semibold text-foreground capitalize mr-2">
+                        <Text className="text-sm font-semibold text-foreground capitalize mr-2">
                           {newTaskPriority === 'high' ? '🔴 ' : newTaskPriority === 'medium' ? '🟠 ' : '🟢 '}{newTaskPriority}
                         </Text>
                       </Pressable>
                       <Pressable 
                         onPress={() => setNewTaskPriority('none')}
-                        className="w-5 h-5 items-center justify-center bg-background rounded-full"
+                        className="w-6 h-6 items-center justify-center bg-background rounded-full"
                       >
                         <Text className="text-muted-foreground font-bold text-xs leading-none">✕</Text>
                       </Pressable>
@@ -362,7 +368,7 @@ export default function TodoScreen() {
                     display="default"
                     onChange={(event, selectedDate) => {
                       setShowTimePicker(false);
-                      if (selectedDate) {
+                      if (event.type === 'set' && selectedDate) {
                         const isToday = format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
                         if (isToday) {
                           const now = new Date();
