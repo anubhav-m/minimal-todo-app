@@ -16,6 +16,7 @@ export default function TodoScreen() {
   const [date, setDate] = useState(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('medium');
 
@@ -24,11 +25,14 @@ export default function TodoScreen() {
   }, []);
 
   const fetchTasks = async () => {
+    setIsLoading(true);
     try {
       const data = await getTasks();
       setTasks(data);
     } catch (error) {
       console.error('Error fetching tasks', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -103,8 +107,8 @@ export default function TodoScreen() {
 
       <FlatList
         className="flex-1 px-4 pt-4"
-        data={currentDayTasks}
-        keyExtractor={(item) => item._id}
+        data={isLoading ? [1, 2, 3, 4] : currentDayTasks}
+        keyExtractor={(item, index) => isLoading ? `skeleton-${index}` : item._id}
         ListHeaderComponent={
           <View className="mb-6">
             <View className="flex-row justify-between items-center mb-6">
@@ -143,14 +147,25 @@ export default function TodoScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <TaskItem 
-            task={item} 
-            onToggle={() => toggleTaskCompletion(item._id, item.completed)}
-            onDelete={() => handleDeleteTask(item._id)}
-          />
+          isLoading ? (
+            <View className="flex-row items-center bg-card p-4 rounded-2xl mb-3 border border-border">
+              <View className="w-6 h-6 rounded-md bg-muted animate-pulse mr-3" />
+              <View className="flex-1">
+                <View className="h-4 bg-muted rounded w-3/4 animate-pulse mb-2" />
+                <View className="h-3 bg-muted rounded w-1/4 animate-pulse" />
+              </View>
+              <View className="w-16 h-6 rounded-full bg-muted animate-pulse ml-3" />
+            </View>
+          ) : (
+            <TaskItem 
+              task={item} 
+              onToggle={() => toggleTaskCompletion(item._id, item.completed)}
+              onDelete={() => handleDeleteTask(item._id)}
+            />
+          )
         )}
         ListEmptyComponent={
-          <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text>
+          !isLoading ? <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text> : null
         }
       />
 
