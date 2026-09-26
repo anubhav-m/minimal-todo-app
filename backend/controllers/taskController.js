@@ -32,7 +32,7 @@ export const getTasks = async (req, res, next) => {
 export const createTask = async (req, res, next) => {
   try {
     const { sub: googleId } = req.user;
-    const { text, date, priority } = req.body;
+    const { text, date, priority, time, notify } = req.body;
     
     if (!text || !date) {
       throw new ApiError(400, 'Text and date are required');
@@ -45,7 +45,9 @@ export const createTask = async (req, res, next) => {
       userId: user._id,
       text,
       date,
-      priority: priority ?? 'medium'
+      time: time || null,
+      notify: notify || false,
+      priority: priority ?? 'none'
     });
     
     await task.save();

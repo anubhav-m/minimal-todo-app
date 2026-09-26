@@ -46,6 +46,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // If we have a local token and Google still knows who we are, restore session
         if (userInfo) {
+          try {
+            const tokens = await GoogleSignin.getTokens();
+            await AsyncStorage.setItem('todo_token', tokens.accessToken);
+          } catch (e) {
+            console.error('Failed to refresh tokens', e);
+          }
           setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
           setIsLoading(false);
           return;
@@ -54,6 +60,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           try {
             userInfo = await GoogleSignin.signInSilently();
             if (userInfo) {
+              const tokens = await GoogleSignin.getTokens();
+              await AsyncStorage.setItem('todo_token', tokens.accessToken);
               setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
               setIsLoading(false);
               return;

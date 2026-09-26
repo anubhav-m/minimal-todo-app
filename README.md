@@ -6,7 +6,6 @@ A sleek, universal Todo application built with the MERN stack (Express, MongoDB)
 - **Cross-Platform:** Works on both web app and Android.
 - **Calendar-Based Tasks:** Organize and track tasks by specific calendar dates.
 - **Priority Tracking:** Categorize tasks by low, medium, and high priority.
-- **Task Rollover:** Uncompleted tasks automatically roll over to the current day.
 - **Dark/Light Mode:** Full theme support across both web and mobile applications.
 - **Google Authentication:** Secure, cross-platform login system using Google OAuth.
 

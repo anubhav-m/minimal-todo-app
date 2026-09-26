@@ -33,7 +33,7 @@ export const getTasks = async () => {
   return response.data;
 };
 
-export const createTask = async (data: { text: string; date: string; priority: string }) => {
+export const createTask = async (data: { text: string; date: string; priority: string; time?: string | null; notify?: boolean }) => {
   const response = await api.post('/tasks', data);
   return response.data;
 };
