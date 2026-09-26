@@ -78,7 +78,17 @@ export default function TodoScreen() {
 
   const selectedDateStr = format(date, 'yyyy-MM-dd');
   const todayStr = format(new Date(), 'yyyy-MM-dd');
-  const currentDayTasks = tasks.filter(t => t.date === selectedDateStr);
+  
+  const getEffectiveDate = (t: any) => {
+    // If a task is from the past and incomplete, it visually belongs to today
+    if (!t.completed && t.date < todayStr) {
+      return todayStr;
+    }
+    return t.date;
+  };
+  
+  const currentDayTasks = tasks.filter(t => getEffectiveDate(t) === selectedDateStr);
+  
   const isDark = colorScheme === 'dark';
 
   return (
@@ -112,38 +122,38 @@ export default function TodoScreen() {
         ListHeaderComponent={
           <View className="mb-6">
             <View className="flex-row justify-between items-center mb-6">
-              <Text className="text-lg font-bold text-foreground">
-                {format(date, 'MMMM do, yyyy')}
-              </Text>
-              
               <Pressable 
                 onPress={() => setIsCalendarOpen(true)}
                 className="flex-row items-center bg-card border border-border px-4 py-2 rounded-lg"
               >
-                <CalendarIcon size={16} color={isDark ? '#e2e8f0' : '#0f172a'} />
-                <Text className="text-foreground font-medium ml-2">Calendar</Text>
+                <CalendarIcon size={18} color={isDark ? '#e2e8f0' : '#0f172a'} />
+                <Text className="text-lg font-bold text-foreground ml-2">
+                  {format(date, 'MMMM do, yyyy')}
+                </Text>
               </Pressable>
             </View>
 
-            <View className="bg-card p-4 rounded-2xl border border-border">
-              <TextInput
-                className="h-12 border border-input rounded-xl px-4 text-foreground bg-background mb-4"
-                placeholder="Add a new task..."
-                placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
-                value={newTaskText}
-                onChangeText={setNewTaskText}
-                onSubmitEditing={handleAddTask}
-              />
-              <View className="flex-row justify-between items-center">
-                <PrioritySelector selected={newTaskPriority} onSelect={setNewTaskPriority} />
-                <Pressable 
-                  className="bg-primary px-6 py-3 rounded-full ml-4"
-                  onPress={handleAddTask}
-                >
-                  <Text className="text-primary-foreground font-semibold">Add</Text>
-                </Pressable>
+            {selectedDateStr >= todayStr && (
+              <View className="bg-card p-4 rounded-2xl border border-border">
+                <TextInput
+                  className="h-12 border border-input rounded-xl px-4 text-foreground bg-background mb-4"
+                  placeholder="Add a new task..."
+                  placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
+                  value={newTaskText}
+                  onChangeText={setNewTaskText}
+                  onSubmitEditing={handleAddTask}
+                />
+                <View className="flex-row justify-between items-center">
+                  <PrioritySelector selected={newTaskPriority} onSelect={setNewTaskPriority} />
+                  <Pressable 
+                    className="bg-primary px-6 py-3 rounded-full ml-4"
+                    onPress={handleAddTask}
+                  >
+                    <Text className="text-primary-foreground font-semibold">Add</Text>
+                  </Pressable>
+                </View>
               </View>
-            </View>
+            )}
           </View>
         }
         renderItem={({ item }) => (

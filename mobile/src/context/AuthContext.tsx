@@ -34,12 +34,43 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const checkToken = async () => {
     try {
       const token = await AsyncStorage.getItem('todo_token');
+      
       if (token) {
-        // Assume valid for now, in reality you'd validate with backend
-        setUser({ name: 'User', email: '' });
+        // Just verify if Google still considers us signed in natively
+        let userInfo = null;
+        try {
+          userInfo = GoogleSignin.getCurrentUser();
+        } catch (e) {
+          // ignore
+        }
+
+        // If we have a local token and Google still knows who we are, restore session
+        if (userInfo) {
+          setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
+          setIsLoading(false);
+          return;
+        } else {
+          // If getCurrentUser is null, try silent sign in to restore the session
+          try {
+            userInfo = await GoogleSignin.signInSilently();
+            if (userInfo) {
+              setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
+              setIsLoading(false);
+              return;
+            }
+          } catch (e) {
+            // silent sign in failed
+          }
+        }
       }
+      
+      // If we are here, we are not signed in
+      await AsyncStorage.removeItem('todo_token');
+      setUser(null);
     } catch (error) {
       console.error('Error checking token:', error);
+      await AsyncStorage.removeItem('todo_token');
+      setUser(null);
     } finally {
       setIsLoading(false);
     }
