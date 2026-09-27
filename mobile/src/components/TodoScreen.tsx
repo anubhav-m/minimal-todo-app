@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { getTasks, createTask, updateTask, deleteTask } from '../api/api';
 import TaskItem from './TaskItem';
 import PrioritySelector from './PrioritySelector';
-import { LogOut, Calendar as CalendarIcon, Moon, Sun, Bell, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { LogOut, Calendar as CalendarIcon, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 
 Notifications.setNotificationHandler({
@@ -268,7 +268,7 @@ export default function TodoScreen() {
 
       <FlatList
         className="flex-1 px-4 pt-4"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
         data={isLoading ? [1, 2, 3, 4] : currentDayTasks}
         keyExtractor={(item, index) => isLoading ? `skeleton-${index}` : item._id}
@@ -332,10 +332,17 @@ export default function TodoScreen() {
                         className="p-1 mr-1"
                         hitSlop={10}
                       >
-                        <Bell 
-                          size={16} 
-                          color={notifyMe ? (isDark ? '#3b82f6' : '#2563eb') : (isDark ? '#64748b' : '#94a3b8')} 
-                        />
+                        {notifyMe ? (
+                          <Bell 
+                            size={16} 
+                            color={isDark ? '#3b82f6' : '#2563eb'} 
+                          />
+                        ) : (
+                          <BellOff 
+                            size={16} 
+                            color={isDark ? '#64748b' : '#94a3b8'} 
+                          />
+                        )}
                       </Pressable>
                       <Pressable 
                         onPress={() => {
