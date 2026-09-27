@@ -1,7 +1,7 @@
 import React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Alert, Vibration } from 'react-native';
 import Checkbox from 'expo-checkbox';
-import { Trash2, Clock, Flag, Bell, BellOff } from 'lucide-react-native'; 
+import { Clock, Flag, Bell, BellOff } from 'lucide-react-native'; 
 import { useColorScheme } from 'nativewind';
 
 interface TaskItemProps {
@@ -23,9 +23,26 @@ export default function TaskItem({ task, onToggle, onDelete }: TaskItemProps) {
 
   const hasExtra = (task.priority && task.priority !== 'none') || task.time;
 
+  const handleLongPress = () => {
+    Vibration.vibrate(50);
+    Alert.alert(
+      "Delete Task",
+      "Are you sure you want to permanently delete this task?",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Delete", style: "destructive", onPress: onDelete }
+      ]
+    );
+  };
+
   return (
     <View className="flex-row items-center bg-card p-4 rounded-xl border border-border mb-3">
-      <Pressable onPress={onToggle} className="flex-1 flex-row mr-2">
+      <Pressable 
+        onPress={onToggle} 
+        onLongPress={handleLongPress}
+        delayLongPress={400}
+        className="flex-1 flex-row"
+      >
         <View className="pt-0.5">
           <Checkbox
             value={task.completed}
@@ -67,10 +84,6 @@ export default function TaskItem({ task, onToggle, onDelete }: TaskItemProps) {
             </View>
           )}
         </View>
-      </Pressable>
-
-      <Pressable onPress={onDelete} className="p-2 ml-1">
-        <Trash2 size={20} color="#ef4444" />
       </Pressable>
     </View>
   );
