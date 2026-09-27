@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Switch, Alert, PanResponder } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Switch, Alert, PanResponder, Animated, Dimensions } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Notifications from 'expo-notifications';
@@ -34,25 +34,64 @@ export default function TodoScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [notifyMe, setNotifyMe] = useState(false);
   const [isFlipping, setIsFlipping] = useState(false);
+  const { width: SCREEN_WIDTH } = Dimensions.get('window');
+  
+  const headerTranslateX = useRef(new Animated.Value(0)).current;
+  const listTranslateX = useRef(new Animated.Value(0)).current;
+
+  const triggerSwipeAnimation = (direction: -1 | 1, updateDateFn: () => void) => {
+    setIsFlipping(true);
+    Animated.parallel([
+      Animated.timing(headerTranslateX, {
+        toValue: direction * SCREEN_WIDTH * 0.8,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(listTranslateX, {
+        toValue: direction * SCREEN_WIDTH,
+        duration: 150,
+        useNativeDriver: true,
+      })
+    ]).start(() => {
+      updateDateFn();
+      headerTranslateX.setValue(-direction * SCREEN_WIDTH * 0.8);
+      listTranslateX.setValue(-direction * SCREEN_WIDTH);
+      
+      Animated.parallel([
+        Animated.timing(headerTranslateX, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(listTranslateX, {
+          toValue: 0,
+          duration: 150,
+          useNativeDriver: true,
+        })
+      ]).start(() => {
+        setIsFlipping(false);
+      });
+    });
+  };
 
   const goToNextDay = () => {
-    setIsFlipping(true);
-    setDate(current => {
-      const nextDay = new Date(current);
-      nextDay.setDate(nextDay.getDate() + 1);
-      return nextDay;
+    triggerSwipeAnimation(-1, () => {
+      setDate(current => {
+        const nextDay = new Date(current);
+        nextDay.setDate(nextDay.getDate() + 1);
+        return nextDay;
+      });
     });
-    setTimeout(() => setIsFlipping(false), 150);
   };
 
   const goToPreviousDay = () => {
-    setIsFlipping(true);
-    setDate(current => {
-      const prevDay = new Date(current);
-      prevDay.setDate(prevDay.getDate() - 1);
-      return prevDay;
+    triggerSwipeAnimation(1, () => {
+      setDate(current => {
+        const prevDay = new Date(current);
+        prevDay.setDate(prevDay.getDate() - 1);
+        return prevDay;
+      });
     });
-    setTimeout(() => setIsFlipping(false), 150);
   };
 
   const panResponder = useRef(
@@ -231,32 +270,36 @@ export default function TodoScreen() {
         className="flex-1 px-4 pt-4"
         contentContainerStyle={{ paddingBottom: 120 }}
         keyboardShouldPersistTaps="handled"
-        data={(isLoading || isFlipping) ? [1, 2, 3, 4] : currentDayTasks}
-        keyExtractor={(item, index) => (isLoading || isFlipping) ? `skeleton-${index}` : item._id}
+        data={isLoading ? [1, 2, 3, 4] : currentDayTasks}
+        keyExtractor={(item, index) => isLoading ? `skeleton-${index}` : item._id}
         ListHeaderComponent={
           <View className="mb-6">
-            <View className="flex-row justify-center items-center mb-6">
-              <View className="flex-row items-center bg-card border border-border rounded-xl">
-                <Pressable onPress={goToPreviousDay} className="px-4 py-3 border-r border-border" hitSlop={10}>
-                  <ChevronLeft size={24} color={isDark ? '#94a3b8' : '#64748b'} />
+            <Animated.View style={{ transform: [{ translateX: headerTranslateX }] }} className="mb-8 mt-4">
+              <View className="flex-row items-center justify-between w-full px-2">
+                <Pressable onPress={goToPreviousDay} className="w-12 h-12 items-center justify-center bg-card rounded-full shadow-sm" hitSlop={10}>
+                  <ChevronLeft size={24} color={isDark ? '#e2e8f0' : '#0f172a'} />
                 </Pressable>
+                
                 <Pressable 
                   onPress={() => setIsCalendarOpen(true)}
-                  className="flex-row items-center px-6 py-3"
+                  className="items-center justify-center flex-1 px-4"
                 >
-                  <CalendarIcon size={20} color={isDark ? '#e2e8f0' : '#0f172a'} />
-                  <Text className="text-lg font-bold text-foreground ml-2">
-                    {format(date, 'MMMM d, yyyy')}
+                  <Text className="text-4xl font-extrabold text-foreground tracking-tighter mb-1 text-center">
+                    {format(date, 'MMMM d')}
+                  </Text>
+                  <Text className="text-xs font-bold text-primary uppercase tracking-[0.2em] text-center">
+                    {format(date, 'EEEE')}
                   </Text>
                 </Pressable>
-                <Pressable onPress={goToNextDay} className="px-4 py-3 border-l border-border" hitSlop={10}>
-                  <ChevronRight size={24} color={isDark ? '#94a3b8' : '#64748b'} />
+
+                <Pressable onPress={goToNextDay} className="w-12 h-12 items-center justify-center bg-card rounded-full shadow-sm" hitSlop={10}>
+                  <ChevronRight size={24} color={isDark ? '#e2e8f0' : '#0f172a'} />
                 </Pressable>
               </View>
-            </View>
+            </Animated.View>
 
             {selectedDateStr >= todayStr && (
-              <View className="bg-card p-4 rounded-2xl border border-border">
+              <Animated.View style={{ transform: [{ translateX: listTranslateX }] }} className="bg-card p-4 rounded-2xl border border-border">
                 <View className="flex-row items-center mb-4">
                   <View className="flex-1 border border-input rounded-xl px-4 bg-background h-14 justify-center mr-3">
                     <TextInput
@@ -272,7 +315,7 @@ export default function TodoScreen() {
                     onPress={handleAddTask}
                     className="w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-sm"
                   >
-                    <Text className="text-primary-foreground font-bold text-3xl leading-none">+</Text>
+                    <Text className="text-primary-foreground font-bold text-3xl leading-none mb-1">+</Text>
                   </Pressable>
                 </View>
                 
@@ -385,30 +428,36 @@ export default function TodoScreen() {
                     }}
                   />
                 )}
-              </View>
+              </Animated.View>
             )}
           </View>
         }
         renderItem={({ item }) => (
-          (isLoading || isFlipping) ? (
-            <View className="flex-row items-center bg-card p-4 rounded-2xl mb-3 border border-border">
-              <View className="w-6 h-6 rounded-md bg-muted animate-pulse mr-3" />
-              <View className="flex-1">
-                <View className="h-4 bg-muted rounded w-3/4 animate-pulse mb-2" />
-                <View className="h-3 bg-muted rounded w-1/4 animate-pulse" />
+          <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
+            {isLoading ? (
+              <View className="flex-row items-center bg-card p-4 rounded-2xl mb-3 border border-border">
+                <View className="w-6 h-6 rounded-md bg-muted animate-pulse mr-3" />
+                <View className="flex-1">
+                  <View className="h-4 bg-muted rounded w-3/4 animate-pulse mb-2" />
+                  <View className="h-3 bg-muted rounded w-1/4 animate-pulse" />
+                </View>
+                <View className="w-16 h-6 rounded-full bg-muted animate-pulse ml-3" />
               </View>
-              <View className="w-16 h-6 rounded-full bg-muted animate-pulse ml-3" />
-            </View>
-          ) : (
-            <TaskItem 
-              task={item} 
-              onToggle={() => toggleTaskCompletion(item._id, item.completed)}
-              onDelete={() => handleDeleteTask(item._id)}
-            />
-          )
+            ) : (
+              <TaskItem 
+                task={item} 
+                onToggle={() => toggleTaskCompletion(item._id, item.completed)}
+                onDelete={() => handleDeleteTask(item._id)}
+              />
+            )}
+          </Animated.View>
         )}
         ListEmptyComponent={
-          !isLoading ? <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text> : null
+          !isLoading ? (
+            <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
+              <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text>
+            </Animated.View>
+          ) : null
         }
       />
 
