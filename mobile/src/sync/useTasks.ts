@@ -17,7 +17,7 @@ const PERIODIC_SYNC_MS = 2 * 60 * 1000;
 
 const NOT_LOADED: SyncStatus = { online: true, syncing: false, pending: 0, failed: [], synced: false, problem: null };
 
-export type EditableFields = Pick<TaskFields, 'text' | 'time' | 'notify' | 'priority'>;
+export type EditableFields = Pick<TaskFields, 'text' | 'date' | 'time' | 'notify' | 'priority'>;
 
 // Only "no network at all" counts as offline. Connected-without-internet is left to the
 // retry backoff, because the OS's reachability guess can be wrong for long stretches.
@@ -156,6 +156,9 @@ export const useTasks = (account: string) => {
     engine.remove(clientId);
   };
 
+  // Resolves when the attempt is over, whether or not it reached the server
+  const syncNow = () => engine?.sync('manual') ?? Promise.resolve();
+
   const retryFailed = () => engine?.retryFailed();
 
   const discardFailed = () => {
@@ -163,6 +166,9 @@ export const useTasks = (account: string) => {
     // Tasks went back to the server's copy; reminders follow
     reminders.current?.reconcile();
   };
+
+  // After notifications are allowed: schedule what could not be scheduled before
+  const refreshReminders = () => reminders.current?.reconcile();
 
   // Sign-out: this account's reminders and tasks leave the device.
   const forgetAccount = async () => {
@@ -179,8 +185,10 @@ export const useTasks = (account: string) => {
     toggleTask,
     editTask,
     deleteTask,
+    syncNow,
     retryFailed,
     discardFailed,
+    refreshReminders,
     forgetAccount,
   };
 };

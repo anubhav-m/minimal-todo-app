@@ -1,8 +1,8 @@
 import React from 'react';
 import { View, Text, Pressable, Alert, Vibration } from 'react-native';
 import Checkbox from 'expo-checkbox';
-import { Clock, Bell, BellOff, CloudOff } from 'lucide-react-native';
-import { useColorScheme } from 'nativewind';
+import { Clock, Bell, CloudUpload, EllipsisVertical } from 'lucide-react-native';
+import { useThemeColors } from '../theme/colors';
 
 interface TaskItemProps {
   task: {
@@ -14,21 +14,31 @@ interface TaskItemProps {
   };
   // Has changes the server has not confirmed yet
   pending?: boolean;
+  // Still open after its time today has passed
+  overdue?: boolean;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-export default function TaskItem({ task, pending, onToggle, onEdit, onDelete }: TaskItemProps) {
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === 'dark';
+const MENU_TITLE_LENGTH = 60;
 
-  const hasExtra = (task.priority && task.priority !== 'none') || task.time;
+export default function TaskItem({ task, pending, overdue, onToggle, onEdit, onDelete }: TaskItemProps) {
+  const colors = useThemeColors();
 
-  const handleLongPress = () => {
-    Vibration.vibrate(50);
+  const priority = task.priority && task.priority !== 'none' ? task.priority : null;
+  const priorityColor = priority === 'high' ? colors.destructive : priority === 'medium' ? colors.warning : colors.mutedForeground;
+  const hasMeta = !!priority || !!task.time || pending;
+
+  const toggle = () => {
+    if (!task.completed) Vibration.vibrate(10);
+    onToggle();
+  };
+
+  const openMenu = () => {
+    const title = task.text.length > MENU_TITLE_LENGTH ? `${task.text.slice(0, MENU_TITLE_LENGTH)}…` : task.text;
     Alert.alert(
-      task.text,
+      title,
       undefined,
       [
         { text: "Cancel", style: "cancel" },
@@ -38,61 +48,93 @@ export default function TaskItem({ task, pending, onToggle, onEdit, onDelete }: 
     );
   };
 
+  const handleLongPress = () => {
+    Vibration.vibrate(50);
+    openMenu();
+  };
+
+  // Read out as one item; the parts below are not separate stops
+  const label = [
+    task.text,
+    task.time ? (overdue ? `${task.time}, overdue` : task.time) : null,
+    task.time && task.notify ? 'reminder on' : null,
+    priority ? `${priority} priority` : null,
+    pending ? 'waiting to sync' : null,
+  ].filter(Boolean).join(', ');
+
   return (
-    <View className="flex-row items-center bg-card p-4 rounded-xl border border-border mb-3">
-      <Pressable 
-        onPress={onToggle} 
+    <View className="flex-row items-center bg-card pl-4 rounded-2xl border border-border mb-3">
+      <Pressable
+        onPress={toggle}
         onLongPress={handleLongPress}
         delayLongPress={400}
-        className="flex-1 flex-row"
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: task.completed }}
+        accessibilityLabel={label}
+        accessibilityActions={[{ name: 'edit', label: 'Edit' }, { name: 'delete', label: 'Delete' }]}
+        onAccessibilityAction={event => {
+          if (event.nativeEvent.actionName === 'edit') onEdit();
+          if (event.nativeEvent.actionName === 'delete') onDelete();
+        }}
+        className="flex-1 flex-row py-4"
       >
-        <View className="pt-0.5">
+        <View className="pt-0.5" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
           <Checkbox
             value={task.completed}
-            onValueChange={onToggle}
-            color={task.completed ? (isDark ? '#3b82f6' : '#0f172a') : undefined}
-            className="rounded-md w-6 h-6 border-2 border-muted-foreground mr-3"
+            onValueChange={toggle}
+            color={task.completed ? colors.primary : colors.mutedForeground}
+            className="rounded-md w-6 h-6 mr-3"
           />
         </View>
-        
+
         <View className="flex-1 justify-center">
-          <Text 
+          <Text
             className={`text-base ${task.completed ? 'line-through text-muted-foreground' : 'text-foreground'}`}
           >
             {task.text}
           </Text>
-          
-          {hasExtra && (
-            <View className="flex-row items-center mt-2 flex-wrap gap-y-1">
+
+          {hasMeta && (
+            <View className="flex-row items-center mt-2 flex-wrap gap-x-4 gap-y-1">
               {task.time && (
-                <View className="flex-row items-center mr-4">
-                  <Clock size={12} color={isDark ? '#94a3b8' : '#64748b'} />
-                  <Text className="text-xs text-muted-foreground ml-1 mr-1.5">{task.time}</Text>
-                  {task.notify ? (
-                    <Bell size={12} color={isDark ? '#3b82f6' : '#2563eb'} />
-                  ) : (
-                    <BellOff size={12} color={isDark ? '#64748b' : '#94a3b8'} />
+                <View className="flex-row items-center">
+                  <Clock size={12} color={overdue ? colors.destructive : colors.mutedForeground} />
+                  <Text className={`text-xs ml-1 ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {overdue ? `${task.time} · overdue` : task.time}
+                  </Text>
+                  {task.notify && !task.completed && (
+                    <View className="ml-1.5">
+                      <Bell size={12} color={colors.primary} />
+                    </View>
                   )}
                 </View>
               )}
-              
-              {task.priority && task.priority !== 'none' && (
+
+              {priority && (
                 <View className="flex-row items-center">
-                  <Text className="text-xs text-muted-foreground mr-1">
-                    {task.priority === 'high' ? '🔴' : task.priority === 'medium' ? '🟠' : '🟢'}
-                  </Text>
-                  <Text className="text-xs text-muted-foreground capitalize">{task.priority}</Text>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: priorityColor }} />
+                  <Text className="text-xs text-muted-foreground capitalize ml-1.5">{priority}</Text>
+                </View>
+              )}
+
+              {pending && (
+                <View className="flex-row items-center">
+                  <CloudUpload size={12} color={colors.mutedForeground} />
+                  <Text className="text-xs text-muted-foreground ml-1">Waiting to sync</Text>
                 </View>
               )}
             </View>
           )}
         </View>
+      </Pressable>
 
-        {pending && (
-          <View className="justify-center pl-3" accessibilityLabel="Waiting to sync">
-            <CloudOff size={14} color={isDark ? '#64748b' : '#94a3b8'} />
-          </View>
-        )}
+      <Pressable
+        onPress={openMenu}
+        accessibilityRole="button"
+        accessibilityLabel={`Edit or delete ${task.text}`}
+        className="w-12 h-12 items-center justify-center rounded-full active:bg-muted"
+      >
+        <EllipsisVertical size={20} color={colors.mutedForeground} />
       </Pressable>
     </View>
   );

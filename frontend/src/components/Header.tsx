@@ -2,8 +2,9 @@ import { Moon, Sun, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface HeaderProps {
-  theme: "dark" | "light" | "system";
-  setTheme: (theme: "dark" | "light" | "system") => void;
+  // The theme on screen, so the toggle always switches to the other one
+  theme: "dark" | "light";
+  setTheme: (theme: "dark" | "light") => void;
   onLogout: () => void;
 }
 
@@ -15,7 +16,12 @@ export function Header({ theme, setTheme, onLogout }: HeaderProps) {
         Todo
       </h1>
       <div className="flex gap-4">
-        <Button variant="ghost" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        >
           {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
         <Button variant="outline" onClick={onLogout} className="flex gap-2 h-10">

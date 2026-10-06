@@ -16,6 +16,8 @@ interface AuthContextType {
   isLoading: boolean;
   isSigningIn: boolean;
   signIn: () => Promise<void>;
+  // Renews an ended Google session for the account already signed in here
+  reauthenticate: () => Promise<boolean>;
   signOut: () => Promise<void>;
 }
 
@@ -81,7 +83,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsSigningIn(true);
     try {
       await GoogleSignin.hasPlayServices();
-      await GoogleSignin.signIn();
+      const result = await GoogleSignin.signIn();
+      // Backing out of the account picker is not an error
+      if (result.type !== 'success') return;
       const tokens = await GoogleSignin.getTokens();
       
       if (tokens.accessToken) {
@@ -93,18 +97,45 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error: any) {
       console.error('Raw Login Error:', error);
       
-      if (error.code === statusCodes.SIGN_IN_CANCELLED || error.code === '12501') {
-        Alert.alert('Sign In Cancelled', 'The sign in flow was cancelled. If you did not cancel it, please check your internet connection.');
-      } else if (error.code === statusCodes.IN_PROGRESS) {
-        Alert.alert('Please Wait', 'Sign in is already in progress.');
+      if (error.code === statusCodes.SIGN_IN_CANCELLED || error.code === '12501' || error.code === statusCodes.IN_PROGRESS) {
+        // The user backed out, or a sign-in is already on screen: nothing to report
       } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
-        Alert.alert('Error', 'Google Play Services are not available on this device.');
+        Alert.alert("Couldn't sign in", 'Google Play Services is missing or out of date on this device. Update it and try again.');
       } else {
-        const errorMessage = error.message || 'We could not sign you in. Please check your internet connection and try again.';
-        Alert.alert(`Sign In Failed (${error.code || 'unknown'})`, errorMessage);
+        Alert.alert("Couldn't sign in", 'Check your connection and try again.');
       }
     } finally {
       setIsSigningIn(false);
+    }
+  };
+
+  // The session ended but this device still holds the account's tasks, possibly
+  // with unsynced changes. Signing in again as the same account keeps all of it.
+  const reauthenticate = async (): Promise<boolean> => {
+    if (!user) return false;
+    try {
+      await GoogleSignin.hasPlayServices();
+      const result = await GoogleSignin.signIn();
+      if (result.type !== 'success') return false;
+
+      if (result.data.user.email !== user.email) {
+        // Another account's token would send this account's changes to the wrong place
+        await GoogleSignin.signOut().catch(() => {});
+        Alert.alert(
+          'Different account',
+          `The tasks on this device belong to ${user.email}. Sign in with that account to sync them.`
+        );
+        return false;
+      }
+
+      const tokens = await GoogleSignin.getTokens();
+      await storeSession(user, tokens.accessToken);
+      return true;
+    } catch (error: any) {
+      if (error.code !== statusCodes.SIGN_IN_CANCELLED && error.code !== '12501') {
+        Alert.alert("Couldn't sign in", 'Check your connection and try again.');
+      }
+      return false;
     }
   };
 
@@ -120,7 +151,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isSigningIn, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, isLoading, isSigningIn, signIn, reauthenticate, signOut }}>
       {children}
     </AuthContext.Provider>
   );

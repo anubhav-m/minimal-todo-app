@@ -10,18 +10,21 @@ export default function PrioritySelector({ selected, onSelect }: PrioritySelecto
   const options = ['low', 'medium', 'high'];
 
   return (
-    <View className="flex-1 flex-row bg-muted rounded-xl p-1">
+    <View className="flex-1 flex-row bg-muted rounded-xl p-1" accessibilityRole="radiogroup" accessibilityLabel="Priority">
       {options.map((option) => {
         const isSelected = selected === option;
         return (
           <Pressable
             key={option}
             onPress={() => onSelect(option)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: isSelected }}
+            accessibilityLabel={`${option} priority`}
             className={`flex-1 items-center justify-center py-2 rounded-lg ${
               isSelected ? 'bg-background' : 'bg-transparent'
             }`}
           >
-            <Text 
+            <Text
               className={`text-sm font-semibold capitalize ${
                 isSelected ? 'text-foreground' : 'text-muted-foreground'
               }`}

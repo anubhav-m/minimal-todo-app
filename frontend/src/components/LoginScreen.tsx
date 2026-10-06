@@ -12,16 +12,25 @@ const GoogleIcon = () => (
 );
 
 interface LoginScreenProps {
-  theme: "dark" | "light" | "system";
-  setTheme: (theme: "dark" | "light" | "system") => void;
+  // The theme on screen, so the toggle always switches to the other one
+  theme: "dark" | "light";
+  setTheme: (theme: "dark" | "light") => void;
   onLogin: () => void;
+  // Why the last sign-in attempt did not work, if it did not
+  error?: string | null;
 }
 
-export function LoginScreen({ theme, setTheme, onLogin }: LoginScreenProps) {
+export function LoginScreen({ theme, setTheme, onLogin, error }: LoginScreenProps) {
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-background text-foreground bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 to-slate-200 dark:from-slate-900 dark:to-slate-950 p-4 relative">
+    <div className="flex min-h-screen w-full items-center justify-center bg-background text-foreground bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-100 to-slate-200 dark:from-stone-900 dark:to-stone-950 p-4 relative">
       <div className="absolute top-4 right-4">
-        <Button variant="ghost" size="icon" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="rounded-full bg-background/50 backdrop-blur-sm">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          className="rounded-full bg-background/50"
+        >
           {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
       </div>
@@ -40,6 +49,11 @@ export function LoginScreen({ theme, setTheme, onLogin }: LoginScreenProps) {
             <GoogleIcon />
             Sign in with Google
           </Button>
+          {error && (
+            <p role="alert" className="text-sm text-destructive text-center">
+              {error}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground text-center pt-2">
             By continuing, you are setting up a secure workspace synced to your account.
           </p>

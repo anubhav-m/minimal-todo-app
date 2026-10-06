@@ -5,6 +5,14 @@
     <link rel="icon" type="image/png" href="/logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Todo App</title>
+    <!-- Sets the theme before first paint, so a dark-mode visit does not flash white. Mirrors ThemeProvider. -->
+    <script>
+      (function () {
+        var theme = localStorage.getItem('todo-theme') || 'system';
+        if (theme === 'system') theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.classList.add(theme);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

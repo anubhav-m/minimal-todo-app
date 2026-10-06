@@ -8,12 +8,17 @@ import { authenticate, getTasks, createTask, setTaskCompleted, deleteTask } from
 import { createClientIdSource, createDraft, createMutationTracker, createSingleFlight, createToggleQueue, loadFreshSnapshot } from '@/lib/taskSync';
 import { useTheme } from '@/components/ThemeProvider';
 import { format } from 'date-fns';
-import { Calendar as CalendarIcon } from 'lucide-react';
+import { Calendar as CalendarIcon, X } from 'lucide-react';
 
 import { LoginScreen } from '@/components/LoginScreen';
 import { Header } from '@/components/Header';
 import { TaskForm } from '@/components/TaskForm';
 import { TaskList } from '@/components/TaskList';
+
+// How long a delete can be taken back
+const UNDO_MS = 5000;
+
+const shorten = (text: string) => (text.length > 40 ? `${text.slice(0, 40)}…` : text);
 
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
@@ -21,8 +26,18 @@ export default function App() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [newTaskText, setNewTaskText] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState('medium');
-  const { theme, setTheme } = useTheme();
+  const [newTaskPriority, setNewTaskPriority] = useState('none');
+  const { resolvedTheme, setTheme } = useTheme();
+  // The first load failed, so there is no list to show
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  // Something the user did was not saved; says what, and what the screen did about it
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  // Deleted on screen but not yet for real, so Undo has nothing to reverse
+  const [heldDelete, setHeldDelete] = useState<string | null>(null);
+  const heldDeleteRef = useRef<string | null>(null);
+  const undoTimer = useRef<number | undefined>(undefined);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   // Local date (yyyy-MM-dd) of the last successful fetch, i.e. the last day rollover ran for
   const lastFetchDay = useRef('');
@@ -52,6 +67,8 @@ export default function App() {
     },
     onFailed: (id, confirmed, error) => {
       console.error('Error updating task', error);
+      const task = tasksRef.current.find(t => t._id === id);
+      if (task) setNotice(`Couldn't update "${shorten(task.text)}", so it is back as it was. Try again.`);
       updateTasks(current => current.map(t => t._id === id ? { ...t, completed: confirmed } : t));
     },
     // Deleted on another device: drop it here too
@@ -64,9 +81,20 @@ export default function App() {
   };
 
   const handleDateSelect = (newDate: Date | undefined) => {
-    setDate(newDate);
+    // Clicking the selected day again reports "no date"; keep the day instead
+    if (newDate) setDate(newDate);
     setIsCalendarOpen(false);
   };
+
+  useEffect(() => {
+    const update = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('todo_token');
@@ -119,6 +147,7 @@ export default function App() {
         );
         if (startedIn !== session.current) return;
 
+        setLoadFailed(false);
         if (fresh) {
           updateTasks(() => data);
           lastFetchDay.current = localToday;
@@ -131,8 +160,12 @@ export default function App() {
       });
     } catch (error) {
       console.error('Error fetching tasks', error);
-      if (startedIn === session.current && (error as any).response?.status === 401) {
+      if (startedIn !== session.current) return;
+      if ((error as any).response?.status === 401) {
         handleLogout();
+      } else if (!hasLoaded.current) {
+        // With a list already on screen a failed refresh changes nothing the user can see
+        setLoadFailed(true);
       }
     } finally {
       if (!silent) setIsLoading(false);
@@ -141,6 +174,7 @@ export default function App() {
 
   const login = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
+      setLoginError(null);
       try {
         const res = await authenticate(tokenResponse.access_token);
         localStorage.setItem('todo_token', tokenResponse.access_token);
@@ -149,12 +183,16 @@ export default function App() {
         fetchTasks();
       } catch (err) {
         console.error('Login failed on backend', err);
+        setLoginError("Couldn't sign you in. Check your connection and try again.");
       }
     },
-    onError: () => console.error('Login Failed'),
+    onError: () => setLoginError("Google sign-in didn't finish. Try again."),
   });
 
   const handleLogout = () => {
+    commitHeldDelete();
+    setNotice(null);
+    setLoadFailed(false);
     googleLogout();
     localStorage.removeItem('todo_token');
     session.current++;
@@ -176,6 +214,7 @@ export default function App() {
     const payload = { text, date: format(date, 'yyyy-MM-dd'), priority: newTaskPriority };
     const clientId = clientIds.idFor(payload);
     setNewTaskText('');
+    setNotice(null);
 
     const done = tracker.begin();
     try {
@@ -187,7 +226,10 @@ export default function App() {
       console.error('Error creating task', error);
       // The server may have saved it anyway; the same clientId makes a retry safe
       clientIds.failed(payload, clientId);
-      if (startedIn === session.current && draft.restore(text)) setNewTaskText(text);
+      if (startedIn !== session.current) return;
+      const restored = draft.restore(text);
+      if (restored) setNewTaskText(text);
+      setNotice(restored ? "Couldn't add that task. It is back in the box so you can try again." : `Couldn't add "${shorten(text)}". Try adding it again.`);
     } finally {
       done();
     }
@@ -200,6 +242,43 @@ export default function App() {
     const completed = toggleQueue.toggle(task);
     updateTasks(current => current.map(t => t._id === id ? { ...t, completed } : t));
   };
+
+  // Hides the task and waits before deleting it; see heldDelete
+  const requestDelete = (id: string) => {
+    commitHeldDelete();
+    setNotice(null);
+    heldDeleteRef.current = id;
+    setHeldDelete(id);
+    undoTimer.current = window.setTimeout(() => commitHeldDelete(), UNDO_MS);
+  };
+
+  const undoDelete = () => {
+    window.clearTimeout(undoTimer.current);
+    heldDeleteRef.current = null;
+    setHeldDelete(null);
+  };
+
+  const commitHeldDelete = () => {
+    window.clearTimeout(undoTimer.current);
+    const id = heldDeleteRef.current;
+    if (!id) return;
+    heldDeleteRef.current = null;
+    setHeldDelete(null);
+    handleDeleteTask(id);
+  };
+
+  // A hidden or closing tab may never run the timer; do not leave the delete hanging
+  const commitHeldDeleteRef = useRef(commitHeldDelete);
+  useEffect(() => {
+    commitHeldDeleteRef.current = commitHeldDelete;
+  });
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') commitHeldDeleteRef.current();
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, []);
 
   const handleDeleteTask = async (id: string) => {
     const taskToDelete = tasksRef.current.find(t => t._id === id);
@@ -214,6 +293,7 @@ export default function App() {
       console.error('Error deleting task', error);
       if (startedIn === session.current) {
         updateTasks(current => current.some(t => t._id === id) ? current : [...current, taskToDelete]);
+        setNotice(`Couldn't delete "${shorten(taskToDelete.text)}", so it is back in the list. Try again.`);
       }
     } finally {
       deleting.delete(id);
@@ -222,15 +302,15 @@ export default function App() {
   };
 
   const selectedDateStr = date ? format(date, 'yyyy-MM-dd') : '';
-  const currentDayTasks = tasks.filter(t => t.date === selectedDateStr);
+  const currentDayTasks = tasks.filter(t => t.date === selectedDateStr && t._id !== heldDelete);
 
   if (!user) {
-    return <LoginScreen theme={theme} setTheme={setTheme} onLogin={() => login()} />;
+    return <LoginScreen theme={resolvedTheme} setTheme={setTheme} onLogin={() => login()} error={loginError} />;
   }
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col items-center py-10 px-4">
-      <Header theme={theme} setTheme={setTheme} onLogout={handleLogout} />
+      <Header theme={resolvedTheme} setTheme={setTheme} onLogout={handleLogout} />
 
       <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-3 gap-8">
         <Card className="hidden md:block col-span-1 h-fit">
@@ -268,20 +348,45 @@ export default function App() {
             </div>
           </CardHeader>
           <CardContent>
-            <TaskForm 
-              newTaskText={newTaskText} 
-              setNewTaskText={changeNewTaskText} 
-              newTaskPriority={newTaskPriority} 
-              setNewTaskPriority={setNewTaskPriority} 
-              onSubmit={handleAddTask} 
+            <TaskForm
+              newTaskText={newTaskText}
+              setNewTaskText={changeNewTaskText}
+              newTaskPriority={newTaskPriority}
+              setNewTaskPriority={setNewTaskPriority}
+              onSubmit={handleAddTask}
             />
 
-            <TaskList 
-              isLoading={isLoading} 
-              tasks={currentDayTasks} 
-              selectedDateStr={selectedDateStr} 
-              onToggleCompletion={toggleTaskCompletion} 
-              onDelete={handleDeleteTask} 
+            {/* Always in the page so screen readers announce what appears in it */}
+            <div role="status" className="space-y-2 empty:hidden mb-4">
+              {!isOnline && (
+                <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                  You're offline. Changes can't be saved until you're back online.
+                </p>
+              )}
+              {notice && (
+                <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-1 text-sm">
+                  <p className="flex-1 py-1">{notice}</p>
+                  <Button variant="ghost" size="icon" aria-label="Dismiss" className="shrink-0" onClick={() => setNotice(null)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+              {heldDelete && (
+                <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-1 text-sm">
+                  <p className="flex-1 py-1">Task deleted</p>
+                  <Button variant="ghost" className="shrink-0 font-semibold text-primary" onClick={undoDelete}>Undo</Button>
+                </div>
+              )}
+            </div>
+
+            <TaskList
+              isLoading={isLoading}
+              loadFailed={loadFailed}
+              onRetry={() => fetchTasks()}
+              tasks={currentDayTasks}
+              selectedDateStr={selectedDateStr}
+              onToggleCompletion={toggleTaskCompletion}
+              onDelete={requestDelete}
             />
           </CardContent>
         </Card>

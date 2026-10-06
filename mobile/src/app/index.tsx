@@ -3,14 +3,16 @@ import { View, Text, Pressable, ActivityIndicator, Image } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import TodoScreen from '../components/TodoScreen';
 import GoogleIcon from '../components/GoogleIcon';
+import { useThemeColors } from '../theme/colors';
 
 export default function Index() {
   const { user, isLoading } = useAuth();
+  const colors = useThemeColors();
 
   if (isLoading) {
     return (
       <View className="flex-1 justify-center items-center bg-background">
-        <ActivityIndicator size="large" color="#0f172a" />
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -20,10 +22,11 @@ export default function Index() {
 
 function LoginScreen() {
   const { signIn, isSigningIn } = useAuth();
+  const colors = useThemeColors();
 
   return (
     <View className="flex-1 items-center justify-center bg-background p-4">
-      <View className="w-full max-w-sm bg-card p-6 rounded-2xl border border-muted">
+      <View className="w-full max-w-sm bg-card p-6 rounded-2xl border border-border">
         <View className="items-center mb-8">
           <View className="flex-row items-center mb-2">
             <Image 
@@ -42,9 +45,12 @@ function LoginScreen() {
           className={`w-full bg-primary py-4 rounded-full flex-row justify-center items-center ${isSigningIn ? 'opacity-70' : ''}`}
           onPress={signIn}
           disabled={isSigningIn}
+          accessibilityRole="button"
+          accessibilityLabel="Sign in with Google"
+          accessibilityState={{ busy: isSigningIn, disabled: isSigningIn }}
         >
           {isSigningIn ? (
-            <ActivityIndicator size="small" color="#ffffff" />
+            <ActivityIndicator size="small" color={colors.primaryForeground} />
           ) : (
             <>
               <GoogleIcon size={20} />

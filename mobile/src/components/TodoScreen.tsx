@@ -1,18 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Alert, PanResponder, Animated, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Alert, PanResponder, Animated, Dimensions, ActivityIndicator, AccessibilityInfo, AppState, RefreshControl } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Calendar } from 'react-native-calendars';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Notifications from 'expo-notifications';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useTasks } from '../sync/useTasks';
+import { useNotificationPermission } from '../notifications/useNotificationPermission';
 import { createDraft } from '../tasks/taskSync';
 import { toLocalDateString } from '../utils/localDate';
+import { getReminderDate } from '../notifications/reminders';
 import TaskItem from './TaskItem';
-import EditTaskModal from './EditTaskModal';
-import PrioritySelector from './PrioritySelector';
-import { LogOut, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight, CloudOff, AlertCircle } from 'lucide-react-native';
+import EditTaskModal, { MAX_TASK_TEXT } from './EditTaskModal';
+import TaskOptions, { TIME_FORMAT } from './TaskOptions';
+import type { TaskOptionValues } from './TaskOptions';
+import StatusStrip from './StatusStrip';
+import { LogOut, Moon, Sun, BellOff, ChevronLeft, ChevronRight, CloudOff, AlertCircle, Plus } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
+import { useThemeColors } from '../theme/colors';
+import { saveThemePreference } from '../theme/themePreference';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -23,31 +29,44 @@ Notifications.setNotificationHandler({
   }),
 });
 
+const NO_OPTIONS: TaskOptionValues = { time: null, notify: false, priority: 'none' };
+
+// How long a delete can be taken back; longer when a screen reader has to get to the button
+const UNDO_MS = 5000;
+const UNDO_MS_SCREEN_READER = 15000;
+
 // A sync shorter than this is not worth showing
 const SPINNER_DELAY_MS = 1000;
 
 export default function TodoScreen() {
-  const { user, signOut } = useAuth();
-  const { colorScheme, toggleColorScheme } = useColorScheme();
+  const { user, signOut, reauthenticate } = useAuth();
+  const { colorScheme, setColorScheme } = useColorScheme();
+  const colors = useThemeColors();
   // Everything below reads and writes the copy on this device; see useTasks
-  const { tasks, pending, status, today, isLoading, addTask, toggleTask, editTask, deleteTask, retryFailed, discardFailed, forgetAccount } = useTasks(user!.email);
+  const { tasks, pending, status, today, isLoading, addTask, toggleTask, editTask, deleteTask, syncNow, retryFailed, discardFailed, refreshReminders, forgetAccount } = useTasks(user!.email);
+  const notifications = useNotificationPermission();
   const [date, setDate] = useState(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [newTaskText, setNewTaskText] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState('none');
-  const [isPriorityActive, setIsPriorityActive] = useState(false);
-  const [newTaskTime, setNewTaskTime] = useState<Date | null>(null);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [notifyMe, setNotifyMe] = useState(false);
-  const [isFlipping, setIsFlipping] = useState(false);
+  const [newTaskOptions, setNewTaskOptions] = useState<TaskOptionValues>(NO_OPTIONS);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  // Deleted on screen but not yet for real; see requestDelete
+  const [heldDelete, setHeldDelete] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showSpinner, setShowSpinner] = useState(false);
   const { width: SCREEN_WIDTH } = Dimensions.get('window');
+  const insets = useSafeAreaInsets();
 
   const headerTranslateX = useRef(new Animated.Value(0)).current;
   const listTranslateX = useRef(new Animated.Value(0)).current;
   const draft = useRef(createDraft()).current;
   const shownToday = useRef(today);
+  // Refs, not state: the swipe handler below is created once and would not see new state
+  const isFlipping = useRef(false);
+  const reduceMotion = useRef(false);
+  const screenReader = useRef(false);
+  const heldDeleteRef = useRef<string | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const changeNewTaskText = (text: string) => {
     draft.set(text);
@@ -55,7 +74,13 @@ export default function TodoScreen() {
   };
 
   const triggerSwipeAnimation = (direction: -1 | 1, updateDateFn: () => void) => {
-    setIsFlipping(true);
+    // Taps that arrive mid-slide would stack a second slide on the first
+    if (isFlipping.current) return;
+    if (reduceMotion.current) {
+      updateDateFn();
+      return;
+    }
+    isFlipping.current = true;
     Animated.parallel([
       Animated.timing(headerTranslateX, {
         toValue: direction * SCREEN_WIDTH * 0.8,
@@ -84,7 +109,7 @@ export default function TodoScreen() {
           useNativeDriver: true,
         })
       ]).start(() => {
-        setIsFlipping(false);
+        isFlipping.current = false;
       });
     });
   };
@@ -109,6 +134,11 @@ export default function TodoScreen() {
     });
   };
 
+  const goToToday = () => {
+    const direction = toLocalDateString(date) < today ? -1 : 1;
+    triggerSwipeAnimation(direction, () => setDate(new Date()));
+  };
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
@@ -126,22 +156,26 @@ export default function TodoScreen() {
     })
   ).current;
 
+  // Permission is not asked for here: it is asked for when a reminder is first wanted
   useEffect(() => {
-    (async () => {
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF231F7C',
-        });
-      }
+    if (Platform.OS !== 'android') return;
+    Notifications.setNotificationChannelAsync('default', {
+      name: 'Task reminders',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#41c889',
+    }).catch(() => {});
+  }, []);
 
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      if (existingStatus !== 'granted') {
-        await Notifications.requestPermissionsAsync();
-      }
-    })();
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(on => { reduceMotion.current = on; }).catch(() => {});
+    AccessibilityInfo.isScreenReaderEnabled().then(on => { screenReader.current = on; }).catch(() => {});
+    const motion = AccessibilityInfo.addEventListener('reduceMotionChanged', on => { reduceMotion.current = on; });
+    const reader = AccessibilityInfo.addEventListener('screenReaderChanged', on => { screenReader.current = on; });
+    return () => {
+      motion.remove();
+      reader.remove();
+    };
   }, []);
 
   // Left open across midnight on "today": follow it to the new day
@@ -169,32 +203,88 @@ export default function TodoScreen() {
     addTask({
       text: text.trim(),
       date: format(date, 'yyyy-MM-dd'),
-      time: newTaskTime ? format(newTaskTime, 'h:mm a') : null,
-      notify: notifyMe,
-      priority: newTaskPriority
+      time: newTaskOptions.time ? format(newTaskOptions.time, TIME_FORMAT) : null,
+      notify: newTaskOptions.time ? newTaskOptions.notify : false,
+      priority: newTaskOptions.priority
     });
 
     // Reset form
     setNewTaskText('');
-    setNewTaskPriority('none');
-    setIsPriorityActive(false);
-    setNewTaskTime(null);
-    setNotifyMe(false);
+    setNewTaskOptions(NO_OPTIONS);
+  };
+
+  // A reminder may only be switched on once it can be delivered
+  const allowReminders = async () => {
+    const allowed = await notifications.ensure();
+    if (allowed) refreshReminders();
+    return allowed;
+  };
+
+  // Carries out the delete that was being held for Undo, if there is one
+  const commitHeldDelete = () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    const clientId = heldDeleteRef.current;
+    if (!clientId) return;
+    heldDeleteRef.current = null;
+    setHeldDelete(null);
+    deleteTask(clientId);
+  };
+  // Timers and listeners outlive the render that made them; they reach the current version through this
+  const commitHeldDeleteRef = useRef(commitHeldDelete);
+  useEffect(() => {
+    commitHeldDeleteRef.current = commitHeldDelete;
+  });
+
+  // Hides the task and waits before deleting it, so Undo has nothing to reverse:
+  // no operation is queued and the reminder is still in place.
+  const requestDelete = (clientId: string) => {
+    commitHeldDelete();
+    heldDeleteRef.current = clientId;
+    setHeldDelete(clientId);
+    undoTimer.current = setTimeout(() => commitHeldDeleteRef.current(), screenReader.current ? UNDO_MS_SCREEN_READER : UNDO_MS);
+  };
+
+  const undoDelete = () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = null;
+    heldDeleteRef.current = null;
+    setHeldDelete(null);
+  };
+
+  // The timer may never fire once the app is in the background, so do not leave a delete hanging
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') commitHeldDeleteRef.current();
+    });
+    return () => {
+      subscription.remove();
+      commitHeldDeleteRef.current();
+    };
+  }, []);
+
+  const refresh = async () => {
+    setIsRefreshing(true);
+    await syncNow();
+    setIsRefreshing(false);
   };
 
   const handleSignOut = () => {
+    // A delete still waiting for Undo counts as a change that has not synced
+    const held = heldDeleteRef.current ? 1 : 0;
+    commitHeldDelete();
     const leave = async () => {
       await forgetAccount();
       await signOut();
     };
-    const unsynced = status.pending + status.failed.length;
-    if (unsynced === 0) {
-      leave();
-      return;
-    }
+    const unsynced = status.pending + status.failed.length + held;
+    // Always asked: the button is one tap from the theme toggle, and signing
+    // out offline leaves no way back in until there is a connection
     Alert.alert(
-      'Sign out?',
-      `${unsynced} ${unsynced === 1 ? 'change has' : 'changes have'} not synced and will be lost.`,
+      `Sign out of ${user!.email}?`,
+      unsynced === 0
+        ? 'Your tasks and reminders will be removed from this device. They stay in your account.'
+        : `${unsynced} ${unsynced === 1 ? 'change has' : 'changes have'} not synced and will be lost.`,
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Sign out', style: 'destructive', onPress: leave }
@@ -203,34 +293,68 @@ export default function TodoScreen() {
   };
 
   const showFailedChanges = () => {
-    const count = status.failed.length === 1 ? 'a change' : `${status.failed.length} changes`;
+    // A rejected create is no longer in the list; its text is in the operation
+    const names = [...new Set(status.failed.map(op =>
+      op.payload.text ?? tasks.find(t => t.clientId === op.taskId)?.text ?? 'A deleted task'
+    ))];
+    const shown = names.slice(0, 5).map(name => `• ${name.length > 60 ? `${name.slice(0, 60)}…` : name}`);
+    if (names.length > 5) shown.push(`• and ${names.length - 5} more`);
     const reasons = [...new Set(status.failed.map(op => op.error))].join('\n');
     Alert.alert(
-      'Could not sync',
-      `The server did not accept ${count}:\n\n${reasons}`,
+      'Changes not saved to your account',
+      `${shown.join('\n')}\n\nReason: ${reasons}\n\nDiscarding puts these tasks back to the last synced version.`,
       [
         { text: 'Close', style: 'cancel' },
-        { text: 'Retry', onPress: retryFailed },
-        { text: 'Discard', style: 'destructive', onPress: discardFailed }
+        { text: 'Try again', onPress: retryFailed },
+        { text: 'Discard changes', style: 'destructive', onPress: discardFailed }
       ]
     );
   };
 
+  const signInAgain = async () => {
+    if (await reauthenticate()) syncNow();
+  };
+
   // Shown only when there is something to say; fully synced shows nothing
-  const waiting = status.pending > 0 ? ` · ${status.pending} pending` : '';
-  const syncLabel =
-    !status.online ? `Offline${waiting}`
-    : status.problem === 'auth' ? 'Sign in again to sync'
-    : status.problem === 'error' && status.pending > 0 ? `Waiting to sync${waiting}`
-    : null;
+  const waiting = status.pending === 0 ? '' : status.pending === 1 ? ' · 1 change waiting' : ` · ${status.pending} changes waiting`;
+  // Reminders that are still due but cannot be delivered
+  const blockedReminders = notifications.granted
+    ? 0
+    : tasks.filter(t => !t.completed && t.notify && (getReminderDate(t)?.getTime() ?? 0) > Date.now()).length;
   const editingTask = editingId ? tasks.find(t => t.clientId === editingId) : undefined;
   // Nothing saved on this device yet and the first answer has not arrived
   const showSkeleton = isLoading || (!status.synced && status.syncing && tasks.length === 0);
 
+  const toggleTheme = () => {
+    const next = colorScheme === 'dark' ? 'light' : 'dark';
+    setColorScheme(next);
+    saveThemePreference(next);
+  };
+
+  const canAdd = newTaskText.trim().length > 0;
   const selectedDateStr = toLocalDateString(date);
   const todayStr = today;
   
-  const currentDayTasks = tasks.filter(t => t.date === selectedDateStr);
+  // Open tasks first; within each group timed tasks in time order, then the rest as created
+  const timeOf = (task: (typeof tasks)[number]) => getReminderDate(task)?.getTime() ?? Infinity;
+  const currentDayTasks = tasks
+    .filter(t => t.date === selectedDateStr && t.clientId !== heldDelete)
+    .map((task, index) => ({ task, index, time: timeOf(task) }))
+    .sort((a, b) => Number(a.task.completed) - Number(b.task.completed) || (a.time === b.time ? a.index - b.index : a.time - b.time))
+    .map(entry => entry.task);
+  const doneCount = currentDayTasks.filter(t => t.completed).length;
+
+  const daysFromToday = differenceInCalendarDays(date, new Date());
+  const weekday = format(date, 'EEEE');
+  const dayName = daysFromToday === 0 ? `Today · ${weekday}` : daysFromToday === 1 ? `Tomorrow · ${weekday}` : daysFromToday === -1 ? `Yesterday · ${weekday}` : weekday;
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+
+  // Open, dated today, and its time has gone by: typically a task carried over with its old time
+  const isOverdue = (task: (typeof tasks)[number]) => {
+    if (task.completed || task.date !== todayStr) return false;
+    const due = getReminderDate(task);
+    return !!due && due.getTime() < Date.now();
+  };
   
   const isDark = colorScheme === 'dark';
 
@@ -240,211 +364,191 @@ export default function TodoScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       {...panResponder.panHandlers}
     >
-      <View className="flex-row justify-between items-center px-4 pt-12 pb-4 bg-card border-b border-border">
+      <View style={{ paddingTop: insets.top + 12 }} className="flex-row justify-between items-center px-4 pb-3 bg-card border-b border-border">
         <View className="flex-row items-center">
           <Image 
             source={require('../../assets/images/logo.png')} 
             style={{ width: 28, height: 28, marginRight: 8 }} 
             resizeMode="contain"
           />
-          <Text className="text-2xl font-bold tracking-tight text-foreground">Todo</Text>
-          {syncLabel ? (
-            <View className="flex-row items-center ml-3">
-              <CloudOff size={12} color={isDark ? '#94a3b8' : '#64748b'} />
-              <Text className="text-xs text-muted-foreground ml-1">{syncLabel}</Text>
-            </View>
-          ) : showSpinner ? (
-            <ActivityIndicator size="small" color={isDark ? '#94a3b8' : '#64748b'} style={{ marginLeft: 12 }} />
+          <Text accessibilityRole="header" className="text-2xl font-bold tracking-tight text-foreground">Todo</Text>
+          {showSpinner && status.online && !status.problem ? (
+            <ActivityIndicator size="small" color={colors.mutedForeground} style={{ marginLeft: 12 }} />
           ) : null}
         </View>
         <View className="flex-row gap-2">
-          <Pressable onPress={toggleColorScheme} className="bg-muted w-10 h-10 rounded-full items-center justify-center">
-            {isDark ? <Sun size={20} color="#e2e8f0" /> : <Moon size={20} color="#0f172a" />}
+          <Pressable
+            onPress={toggleTheme}
+            accessibilityRole="button"
+            accessibilityLabel={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+            className="bg-muted w-12 h-12 rounded-full items-center justify-center active:opacity-70"
+          >
+            {isDark ? <Sun size={20} color={colors.foreground} /> : <Moon size={20} color={colors.foreground} />}
           </Pressable>
-          <Pressable onPress={handleSignOut} className="bg-muted w-10 h-10 rounded-full items-center justify-center">
-            <LogOut size={20} color={isDark ? '#e2e8f0' : '#0f172a'} />
+          <Pressable
+            onPress={handleSignOut}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+            className="bg-muted w-12 h-12 rounded-full items-center justify-center active:opacity-70"
+          >
+            <LogOut size={20} color={colors.foreground} />
           </Pressable>
         </View>
       </View>
 
+      {!status.online ? (
+        <StatusStrip icon={CloudOff} text={`Offline${waiting}`} />
+      ) : status.problem === 'auth' ? (
+        <StatusStrip
+          icon={AlertCircle}
+          tone="destructive"
+          text={`Your sign-in has expired${waiting}`}
+          action="Sign in"
+          onPress={signInAgain}
+        />
+      ) : status.problem === 'error' ? (
+        <StatusStrip
+          icon={AlertCircle}
+          tone="warning"
+          text={`Can't reach the server${waiting || ' · showing saved tasks'}`}
+          action="Retry"
+          onPress={syncNow}
+        />
+      ) : null}
+
       {status.failed.length > 0 && (
-        <Pressable onPress={showFailedChanges} className="flex-row items-center px-4 py-2 bg-muted border-b border-border">
-          <AlertCircle size={14} color={isDark ? '#fca5a5' : '#b91c1c'} />
-          <Text className="text-xs text-foreground ml-2">
-            {status.failed.length === 1 ? '1 change' : `${status.failed.length} changes`} could not be synced
-          </Text>
-        </Pressable>
+        <StatusStrip
+          icon={AlertCircle}
+          tone="destructive"
+          text={`${status.failed.length === 1 ? '1 change was' : `${status.failed.length} changes were`} not saved to your account`}
+          action="Review"
+          onPress={showFailedChanges}
+        />
+      )}
+
+      {blockedReminders > 0 && (
+        <StatusStrip
+          icon={BellOff}
+          tone="warning"
+          text={`${blockedReminders === 1 ? '1 reminder' : `${blockedReminders} reminders`} will not arrive: notifications are off`}
+          action="Turn on"
+          onPress={allowReminders}
+        />
       )}
 
       <FlatList
         className="flex-1 px-4 pt-4"
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + (heldDelete ? 112 : 40) }}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={refresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+            progressBackgroundColor={colors.card}
+          />
+        }
         data={(showSkeleton ? [1, 2, 3, 4] : currentDayTasks) as any[]}
         keyExtractor={(item: any, index) => showSkeleton ? `skeleton-${index}` : item.clientId}
         ListHeaderComponent={
-          <View className="mb-6">
-            <Animated.View style={{ transform: [{ translateX: headerTranslateX }] }} className="mb-8 mt-4">
+          <View className="mb-4">
+            <Animated.View style={{ transform: [{ translateX: headerTranslateX }] }} className="mb-6 mt-4">
               <View className="flex-row items-center justify-between w-full px-2">
-                <Pressable onPress={goToPreviousDay} className="w-12 h-12 items-center justify-center bg-card rounded-full shadow-sm" hitSlop={10}>
-                  <ChevronLeft size={24} color={isDark ? '#e2e8f0' : '#0f172a'} />
+                <Pressable
+                  onPress={goToPreviousDay}
+                  accessibilityRole="button"
+                  accessibilityLabel="Previous day"
+                  className="w-12 h-12 items-center justify-center bg-card border border-border rounded-full active:opacity-70"
+                >
+                  <ChevronLeft size={24} color={colors.foreground} />
                 </Pressable>
                 
-                <Pressable 
+                <Pressable
                   onPress={() => setIsCalendarOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${dayName.replace(' · ', ', ')}, ${format(date, 'MMMM d, yyyy')}. Choose a day`}
                   className="items-center justify-center flex-1 px-4"
                 >
-                  <Text className="text-4xl font-extrabold text-foreground tracking-tighter mb-1 text-center">
-                    {format(date, 'MMMM d')}
+                  <Text
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    maxFontSizeMultiplier={1.5}
+                    className="text-4xl font-extrabold text-foreground tracking-tight mb-1 text-center"
+                  >
+                    {format(date, sameYear ? 'MMMM d' : 'MMM d, yyyy')}
                   </Text>
-                  <Text className="text-xs font-bold text-primary uppercase tracking-[0.2em] text-center">
-                    {format(date, 'EEEE')}
+                  <Text className="text-sm font-semibold text-primary text-center">
+                    {dayName}
                   </Text>
                 </Pressable>
 
-                <Pressable onPress={goToNextDay} className="w-12 h-12 items-center justify-center bg-card rounded-full shadow-sm" hitSlop={10}>
-                  <ChevronRight size={24} color={isDark ? '#e2e8f0' : '#0f172a'} />
+                <Pressable
+                  onPress={goToNextDay}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next day"
+                  className="w-12 h-12 items-center justify-center bg-card border border-border rounded-full active:opacity-70"
+                >
+                  <ChevronRight size={24} color={colors.foreground} />
                 </Pressable>
               </View>
+
+              {daysFromToday !== 0 && (
+                <Pressable
+                  onPress={goToToday}
+                  accessibilityRole="button"
+                  accessibilityLabel="Go to today"
+                  className="self-center mt-2 px-4 min-h-[44px] justify-center rounded-full bg-muted border border-border active:opacity-70"
+                >
+                  <Text className="text-sm font-semibold text-foreground">Back to today</Text>
+                </Pressable>
+              )}
             </Animated.View>
 
             {selectedDateStr >= todayStr && (
               <Animated.View style={{ transform: [{ translateX: listTranslateX }] }} className="bg-card p-4 rounded-2xl border border-border">
-                <View className="flex-row items-center mb-4">
-                  <View className="flex-1 border border-input rounded-xl px-4 bg-background h-14 justify-center mr-3">
+                <View className="flex-row items-center mb-3">
+                  <View className="flex-1 border border-input rounded-xl px-4 bg-background min-h-[56px] justify-center mr-3">
                     <TextInput
-                      className="flex-1 text-base text-foreground"
-                      placeholder="Add a new task..."
-                      placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
+                      className="text-base text-foreground"
+                      accessibilityLabel="New task"
+                      placeholder="Add a task"
+                      placeholderTextColor={colors.mutedForeground}
                       value={newTaskText}
                       onChangeText={changeNewTaskText}
                       onSubmitEditing={handleAddTask}
+                      // Stays focused, so several tasks can be entered in a row
+                      submitBehavior="submit"
+                      returnKeyType="done"
+                      maxLength={MAX_TASK_TEXT}
                     />
                   </View>
-                  <Pressable 
+                  <Pressable
                     onPress={handleAddTask}
-                    className="w-14 h-14 bg-primary rounded-xl items-center justify-center shadow-sm"
+                    disabled={!canAdd}
+                    accessibilityRole="button"
+                    accessibilityLabel="Add task"
+                    accessibilityState={{ disabled: !canAdd }}
+                    className={`w-14 h-14 bg-primary rounded-xl items-center justify-center active:opacity-80 ${canAdd ? '' : 'opacity-40'}`}
                   >
-                    <Text className="text-primary-foreground font-bold text-3xl leading-none mb-1">+</Text>
+                    <Plus size={26} color={colors.primaryForeground} />
                   </Pressable>
                 </View>
-                
-                <View className="flex-row items-center flex-wrap gap-3">
-                  {newTaskTime ? (
-                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-4 pr-1.5 h-10">
-                      <Pressable onPress={() => setShowTimePicker(true)} hitSlop={10}>
-                        <Text className="text-sm font-semibold text-foreground mr-2">
-                          {format(newTaskTime, 'h:mm a')}
-                        </Text>
-                      </Pressable>
-                      <Pressable 
-                        onPress={() => setNotifyMe(!notifyMe)}
-                        className="p-1 mr-1"
-                        hitSlop={10}
-                      >
-                        {notifyMe ? (
-                          <Bell 
-                            size={16} 
-                            color={isDark ? '#3b82f6' : '#2563eb'} 
-                          />
-                        ) : (
-                          <BellOff 
-                            size={16} 
-                            color={isDark ? '#64748b' : '#94a3b8'} 
-                          />
-                        )}
-                      </Pressable>
-                      <Pressable 
-                        onPress={() => {
-                          setNewTaskTime(null);
-                          setNotifyMe(false);
-                        }}
-                        className="w-6 h-6 items-center justify-center bg-background rounded-full"
-                      >
-                        <Text className="text-muted-foreground font-bold text-xs leading-none">✕</Text>
-                      </Pressable>
-                    </View>
-                  ) : (
-                    <Pressable 
-                      onPress={() => setShowTimePicker(true)}
-                      className="bg-muted px-4 h-10 justify-center rounded-full border border-border"
-                    >
-                      <Text numberOfLines={1} className="text-sm font-semibold text-muted-foreground">+ Time</Text>
-                    </Pressable>
-                  )}
 
-                  {newTaskPriority === 'none' && (
-                    <Pressable 
-                      onPress={() => setIsPriorityActive(true)}
-                      className="bg-muted px-4 h-10 justify-center rounded-full border border-border"
-                    >
-                      <Text numberOfLines={1} className="text-sm font-semibold text-muted-foreground">+ Priority</Text>
-                    </Pressable>
-                  )}
+                <TaskOptions
+                  date={selectedDateStr}
+                  {...newTaskOptions}
+                  onChange={(changes) => setNewTaskOptions(current => ({ ...current, ...changes }))}
+                  onRequestReminder={allowReminders}
+                />
+              </Animated.View>
+            )}
 
-                  {newTaskPriority !== 'none' && (
-                    <View className="flex-row items-center bg-muted border border-border rounded-full pl-4 pr-1.5 h-10">
-                      <Pressable onPress={() => setIsPriorityActive(true)} hitSlop={10}>
-                        <Text className="text-sm font-semibold text-foreground capitalize mr-2">
-                          {newTaskPriority === 'high' ? '🔴 ' : newTaskPriority === 'medium' ? '🟠 ' : '🟢 '}{newTaskPriority}
-                        </Text>
-                      </Pressable>
-                      <Pressable 
-                        onPress={() => setNewTaskPriority('none')}
-                        className="w-6 h-6 items-center justify-center bg-background rounded-full"
-                      >
-                        <Text className="text-muted-foreground font-bold text-xs leading-none">✕</Text>
-                      </Pressable>
-                    </View>
-                  )}
-
-                  {isPriorityActive && (
-                    <Modal visible={isPriorityActive} transparent animationType="fade">
-                      <Pressable 
-                        className="flex-1 justify-center items-center bg-black/50 p-4"
-                        onPress={() => setIsPriorityActive(false)}
-                      >
-                        <Pressable className="bg-card w-full max-w-[300px] p-6 rounded-2xl border border-border">
-                          <Text className="text-foreground font-bold text-lg mb-4 text-center">Select Priority</Text>
-                          <View className="h-12">
-                            <PrioritySelector 
-                              selected={newTaskPriority} 
-                              onSelect={(p) => {
-                                setNewTaskPriority(p);
-                                setIsPriorityActive(false);
-                              }} 
-                            />
-                          </View>
-                        </Pressable>
-                      </Pressable>
-                    </Modal>
-                  )}
-                </View>
-
-                {showTimePicker && (
-                  <DateTimePicker
-                    value={newTaskTime || new Date()}
-                    mode="time"
-                    display="default"
-                    onChange={(event, selectedDate) => {
-                      setShowTimePicker(false);
-                      if (event.type === 'set' && selectedDate) {
-                        const isToday = format(date, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd');
-                        if (isToday) {
-                          const now = new Date();
-                          if (
-                            selectedDate.getHours() < now.getHours() || 
-                            (selectedDate.getHours() === now.getHours() && selectedDate.getMinutes() < now.getMinutes())
-                          ) {
-                            Alert.alert("Invalid Time", "You cannot select a time that has already passed today.");
-                            return;
-                          }
-                        }
-                        setNewTaskTime(selectedDate);
-                      }
-                    }}
-                  />
-                )}
+            {!showSkeleton && currentDayTasks.length > 0 && (
+              <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
+                <Text className="text-sm text-muted-foreground mt-6 px-1">
+                  {doneCount === currentDayTasks.length ? `All ${doneCount} done` : `${doneCount} of ${currentDayTasks.length} done`}
+                </Text>
               </Animated.View>
             )}
           </View>
@@ -458,15 +562,15 @@ export default function TodoScreen() {
                   <View className="h-4 bg-muted rounded w-3/4 animate-pulse mb-2" />
                   <View className="h-3 bg-muted rounded w-1/4 animate-pulse" />
                 </View>
-                <View className="w-16 h-6 rounded-full bg-muted animate-pulse ml-3" />
               </View>
             ) : (
               <TaskItem 
                 task={item} 
                 pending={pending.has(item.clientId)}
+                overdue={isOverdue(item)}
                 onToggle={() => toggleTask(item.clientId)}
                 onEdit={() => setEditingId(item.clientId)}
-                onDelete={() => deleteTask(item.clientId)}
+                onDelete={() => requestDelete(item.clientId)}
               />
             )}
           </Animated.View>
@@ -474,11 +578,36 @@ export default function TodoScreen() {
         ListEmptyComponent={
           !showSkeleton ? (
             <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
-              <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text>
+              <Text className="text-center text-base text-foreground mt-8">
+                {selectedDateStr >= todayStr ? 'Nothing planned yet' : 'Nothing left over from this day'}
+              </Text>
+              <Text className="text-center text-sm text-muted-foreground mt-1 px-6">
+                {selectedDateStr >= todayStr
+                  ? 'Add a task above. Anything you do not finish moves to the next day.'
+                  : 'Tasks can only be added to today or a later day.'}
+              </Text>
             </Animated.View>
           ) : null
         }
       />
+
+      {heldDelete && (
+        <View
+          accessibilityLiveRegion="polite"
+          style={{ bottom: insets.bottom + 16, elevation: 6, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } }}
+          className="absolute left-4 right-4 flex-row items-center bg-card border border-border rounded-xl pl-4 pr-1"
+        >
+          <Text className="flex-1 text-sm text-foreground">Task deleted</Text>
+          <Pressable
+            onPress={undoDelete}
+            accessibilityRole="button"
+            accessibilityLabel="Undo delete"
+            className="px-4 min-h-[48px] justify-center active:opacity-70"
+          >
+            <Text className="text-sm font-bold text-primary">Undo</Text>
+          </Pressable>
+        </View>
+      )}
 
       <Modal
         visible={isCalendarOpen}
@@ -493,6 +622,8 @@ export default function TodoScreen() {
         >
           <Pressable className="w-full bg-card rounded-2xl overflow-hidden p-2">
             <Calendar
+              // The calendar reads its theme once, when it mounts
+              key={colorScheme}
               current={selectedDateStr}
               onDayPress={(day: any) => {
                 // Local midnight; new Date('yyyy-MM-dd') would be UTC midnight
@@ -500,17 +631,17 @@ export default function TodoScreen() {
                 setIsCalendarOpen(false);
               }}
               markedDates={{
-                [todayStr]: { marked: true, dotColor: isDark ? '#e2e8f0' : '#0f172a' },
-                [selectedDateStr]: { selected: true, selectedColor: isDark ? '#e2e8f0' : '#0f172a', selectedTextColor: isDark ? '#0f172a' : '#ffffff' }
+                [todayStr]: { marked: true, dotColor: colors.primary },
+                [selectedDateStr]: { selected: true, selectedColor: colors.primary, selectedTextColor: colors.primaryForeground }
               }}
               theme={{
-                calendarBackground: isDark ? '#020817' : '#ffffff',
-                textSectionTitleColor: isDark ? '#94a3b8' : '#64748b',
-                todayTextColor: isDark ? '#ffffff' : '#000000',
-                dayTextColor: isDark ? '#e2e8f0' : '#0f172a',
-                textDisabledColor: isDark ? '#334155' : '#cbd5e1',
-                arrowColor: isDark ? '#e2e8f0' : '#0f172a',
-                monthTextColor: isDark ? '#e2e8f0' : '#0f172a',
+                calendarBackground: colors.card,
+                textSectionTitleColor: colors.mutedForeground,
+                todayTextColor: colors.primary,
+                dayTextColor: colors.foreground,
+                textDisabledColor: colors.border,
+                arrowColor: colors.foreground,
+                monthTextColor: colors.foreground,
                 textDayFontWeight: '500',
                 textMonthFontWeight: 'bold',
                 textDayHeaderFontWeight: '600'
@@ -527,6 +658,7 @@ export default function TodoScreen() {
             editTask(editingTask.clientId, changes);
             setEditingId(null);
           }}
+          onRequestReminder={allowReminders}
           onClose={() => setEditingId(null)}
         />
       )}
