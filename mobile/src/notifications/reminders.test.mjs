@@ -260,3 +260,26 @@ test('reconciliation is skipped after sign-out, and a failed job does not block 
   api.schedule = async () => { throw new Error('native schedule failed'); };
   assert.equal(await queue.sync(task()), false);
 });
+
+// --- offline: tasks are known by clientId ------------------------------------
+
+test('a task made offline (no _id yet) gets a reminder linked by its clientId', async () => {
+  const api = fakeApi();
+  const offline = task({ _id: undefined, clientId: 'c1', notificationId: 'reminder-c1' });
+
+  assert.equal(await syncTaskReminder(api, offline, NOW), true);
+  assert.equal(api.scheduled.get('reminder-c1').data.taskId, 'c1');
+  // Still there after the server has given the task an _id
+  assert.deepEqual(await reconcileReminders(api, [{ ...offline, _id: 'mongo-1' }]), []);
+  assert.equal(api.scheduled.size, 1);
+});
+
+test('a reminder scheduled by an earlier build (linked by _id) is kept after the upgrade', async () => {
+  const legacy = task({ clientId: 'c1' });
+  const api = fakeApi();
+  await syncTaskReminder(api, task(), NOW); // linked by _id 't1'
+
+  assert.deepEqual(await reconcileReminders(api, [legacy]), []);
+  assert.deepEqual(await scheduleMissingReminders(api, [legacy], NOW), []);
+  assert.equal(api.scheduled.size, 1);
+});

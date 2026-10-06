@@ -1,19 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Alert, PanResponder, Animated, Dimensions, AppState } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Alert, PanResponder, Animated, Dimensions, ActivityIndicator } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { format } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
-import { getTasks, createTask, setTaskCompleted, deleteTask } from '../api/api';
-import { reminderApi } from '../notifications/reminderApi';
-import { createReminderQueue } from '../notifications/reminders';
-import { createClientIdSource, createDraft, createMutationTracker, createSingleFlight, createToggleQueue, loadFreshSnapshot } from '../tasks/taskSync';
-import { toLocalDateString, getDeviceTimeZone, msUntilNextLocalMidnight, isRolloverDue } from '../utils/localDate';
+import { useTasks } from '../sync/useTasks';
+import { createDraft } from '../tasks/taskSync';
+import { toLocalDateString } from '../utils/localDate';
 import TaskItem from './TaskItem';
+import EditTaskModal from './EditTaskModal';
 import PrioritySelector from './PrioritySelector';
-import { LogOut, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { LogOut, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight, CloudOff, AlertCircle } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 
 Notifications.setNotificationHandler({
@@ -25,15 +23,16 @@ Notifications.setNotificationHandler({
   }),
 });
 
-const LAST_ROLLOVER_KEY = 'todo_last_rollover_date';
+// A sync shorter than this is not worth showing
+const SPINNER_DELAY_MS = 1000;
 
 export default function TodoScreen() {
-  const { signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const { colorScheme, toggleColorScheme } = useColorScheme();
+  // Everything below reads and writes the copy on this device; see useTasks
+  const { tasks, pending, status, today, isLoading, addTask, toggleTask, editTask, deleteTask, retryFailed, discardFailed, forgetAccount } = useTasks(user!.email);
   const [date, setDate] = useState(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [tasks, setTasks] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [newTaskText, setNewTaskText] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState('none');
   const [isPriorityActive, setIsPriorityActive] = useState(false);
@@ -41,52 +40,14 @@ export default function TodoScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [notifyMe, setNotifyMe] = useState(false);
   const [isFlipping, setIsFlipping] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [showSpinner, setShowSpinner] = useState(false);
   const { width: SCREEN_WIDTH } = Dimensions.get('window');
-  
+
   const headerTranslateX = useRef(new Animated.Value(0)).current;
   const listTranslateX = useRef(new Animated.Value(0)).current;
-  // Local date (yyyy-MM-dd) this device last caught up with rollover; mirrors AsyncStorage
-  const lastRolloverDate = useRef<string | null>(null);
-  // Set on sign-out; anything still in flight must not touch the screen or reminders after it
-  const unmounted = useRef(false);
-  const hasLoaded = useRef(false);
-
-  // The task list as it is right now. Handlers read and change it through here, so
-  // overlapping ones never work from the copy a past render captured.
-  const tasksRef = useRef<any[]>([]);
-  const updateTasks = (change: (current: any[]) => any[]) => {
-    tasksRef.current = change(tasksRef.current);
-    setTasks(tasksRef.current);
-  };
-
-  // Which creates/toggles/deletes are in flight, for fetchTasks to wait on
-  const tracker = useRef(createMutationTracker()).current;
-  const fetchFlight = useRef(createSingleFlight<boolean>()).current;
   const draft = useRef(createDraft()).current;
-  const clientIds = useRef(createClientIdSource()).current;
-  const deleting = useRef(new Set<string>()).current;
-  const reminders = useRef(createReminderQueue(reminderApi, () => unmounted.current ? null : tasksRef.current)).current;
-  const toggleQueue = useRef(createToggleQueue<any>({
-    send: setTaskCompleted,
-    tracker,
-    onConfirmed: (task, desired) => {
-      updateTasks(current => current.map(t => t._id === task._id ? { ...task, completed: desired } : t));
-    },
-    onFailed: (id, confirmed, error) => {
-      console.error('Error updating task', error);
-      if (unmounted.current) return;
-      updateTasks(current => current.map(t => t._id === id ? { ...t, completed: confirmed } : t)); // rollback
-      const task = tasksRef.current.find(t => t._id === id);
-      if (task) reminders.sync(task);
-      Alert.alert('Error', 'Failed to update the task. Please check your connection.');
-    },
-    // Deleted on another device: drop it here too
-    onGone: (id) => {
-      const task = tasksRef.current.find(t => t._id === id);
-      if (task) reminders.cancel(task);
-      updateTasks(current => current.filter(t => t._id !== id));
-    },
-  })).current;
+  const shownToday = useRef(today);
 
   const changeNewTaskText = (text: string) => {
     draft.set(text);
@@ -166,23 +127,6 @@ export default function TodoScreen() {
   ).current;
 
   useEffect(() => {
-    unmounted.current = false;
-    let midnightTimer: ReturnType<typeof setTimeout>;
-    // Timers do not fire while the app is suspended, so midnight is only one of the
-    // triggers; launch and foreground run the same catch-up fetch.
-    const armMidnightTimer = (caughtUp: boolean) => {
-      if (unmounted.current) return;
-      clearTimeout(midnightTimer);
-      midnightTimer = setTimeout(
-        async () => armMidnightTimer(await fetchTasks(true)),
-        caughtUp ? msUntilNextLocalMidnight() + 1000 : 60 * 1000
-      );
-    };
-
-    (async () => {
-      lastRolloverDate.current = await AsyncStorage.getItem(LAST_ROLLOVER_KEY).catch(() => null);
-      armMidnightTimer(await fetchTasks());
-    })();
     (async () => {
       if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('default', {
@@ -198,78 +142,37 @@ export default function TodoScreen() {
         await Notifications.requestPermissionsAsync();
       }
     })();
-
-    // Pick up deletes/completions/rollover from elsewhere whenever the app comes back
-    const subscription = AppState.addEventListener('change', async (state) => {
-      if (state === 'active') armMidnightTimer(await fetchTasks(true));
-    });
-    return () => {
-      unmounted.current = true;
-      clearTimeout(midnightTimer);
-      subscription.remove();
-    };
   }, []);
 
-  // The server rolls unfinished tasks over to the local date sent here, at most once
-  // per day. Returns whether this device is now caught up with that day.
-  // Launch, foreground and the midnight timer can all ask at once; they share one request.
-  const fetchTasks = async (silent = false): Promise<boolean> => {
-    if (!silent) setIsLoading(true);
-    const today = toLocalDateString();
-    try {
-      return await fetchFlight(today, () => loadTasks(today));
-    } catch (error: any) {
-      console.error('Error fetching tasks', error);
-      if (!silent && !unmounted.current) Alert.alert('Network Error', 'Failed to load your tasks. Please check your connection and try again.');
-      return false;
-    } finally {
-      if (!silent) setIsLoading(false);
+  // Left open across midnight on "today": follow it to the new day
+  useEffect(() => {
+    const previous = shownToday.current;
+    shownToday.current = today;
+    if (previous !== today) setDate(current => toLocalDateString(current) === previous ? new Date() : current);
+  }, [today]);
+
+  useEffect(() => {
+    if (!status.syncing) {
+      setShowSpinner(false);
+      return;
     }
-  };
+    const timer = setTimeout(() => setShowSpinner(true), SPINNER_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [status.syncing]);
 
-  const loadTasks = async (today: string): Promise<boolean> => {
-    const { data, fresh } = await loadFreshSnapshot<any[]>(tracker, () => getTasks(today, getDeviceTimeZone()));
-    if (unmounted.current) return false;
-
-    if (fresh) {
-      updateTasks(() => data);
-    } else if (!hasLoaded.current) {
-      // Nothing on screen yet, so show it, keeping anything added while it loaded
-      updateTasks(current => [...data, ...current.filter(t => !data.some(d => d._id === t._id))]);
-    }
-    hasLoaded.current = true;
-    // A snapshot that overlapped a local create/toggle/delete may already be out of date
-    if (!fresh) return false;
-
-    // Drop reminders whose task is gone, completed or moved, then schedule the
-    // ones a rolled-over task now needs on its new day
-    reminders.reconcile();
-
-    const previousDay = lastRolloverDate.current;
-    if (isRolloverDue(today, previousDay)) {
-      lastRolloverDate.current = today;
-      AsyncStorage.setItem(LAST_ROLLOVER_KEY, today).catch(() => {});
-      // Left open across midnight on "today": follow it to the new day
-      if (previousDay) setDate(current => toLocalDateString(current) === previousDay ? new Date() : current);
-    }
-    return true;
-  };
-
-  const handleAddTask = async () => {
+  const handleAddTask = () => {
     // Taken, not read: a second call before the re-render finds nothing to add
     const text = draft.take();
     if (!text) return;
 
-    const form = { time: newTaskTime, notify: notifyMe, priority: newTaskPriority };
-    const timeStr = newTaskTime ? format(newTaskTime, 'h:mm a') : null;
-    const payload = {
-      text,
+    // Saved on the device straight away; it reaches the server whenever there is a connection
+    addTask({
+      text: text.trim(),
       date: format(date, 'yyyy-MM-dd'),
-      time: timeStr,
+      time: newTaskTime ? format(newTaskTime, 'h:mm a') : null,
       notify: notifyMe,
       priority: newTaskPriority
-    };
-    const clientId = clientIds.idFor(payload);
+    });
 
     // Reset form
     setNewTaskText('');
@@ -277,72 +180,55 @@ export default function TodoScreen() {
     setIsPriorityActive(false);
     setNewTaskTime(null);
     setNotifyMe(false);
+  };
 
-    const done = tracker.begin();
-    try {
-      const created = await createTask({
-        ...payload,
-        clientId,
-        // Chosen up front so the id is saved with the task before anything is scheduled
-        notificationId: notifyMe && timeStr ? `reminder-${clientId}` : null
-      });
-      clientIds.succeeded(clientId);
-      if (unmounted.current) return;
-      updateTasks(current => current.some(t => t._id === created._id) ? current : [...current, created]);
-
-      // Schedule notification if requested
-      reminders.sync(created);
-    } catch (error: any) {
-      console.error('Error creating task', error);
-      // The server may have saved it anyway; the same clientId makes a retry safe
-      clientIds.failed(payload, clientId);
-      if (unmounted.current) return;
-      if (draft.restore(text)) {
-        setNewTaskText(text);
-        setNewTaskTime(form.time);
-        setNotifyMe(form.notify);
-        setNewTaskPriority(form.priority);
-      }
-      Alert.alert('Error', 'Failed to save the task. Please try again.');
-    } finally {
-      done();
+  const handleSignOut = () => {
+    const leave = async () => {
+      await forgetAccount();
+      await signOut();
+    };
+    const unsynced = status.pending + status.failed.length;
+    if (unsynced === 0) {
+      leave();
+      return;
     }
+    Alert.alert(
+      'Sign out?',
+      `${unsynced} ${unsynced === 1 ? 'change has' : 'changes have'} not synced and will be lost.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign out', style: 'destructive', onPress: leave }
+      ]
+    );
   };
 
-  const toggleTaskCompletion = (id: string) => {
-    const task = tasksRef.current.find(t => t._id === id);
-    if (!task) return;
-    // Requests for one task go out one at a time; see createToggleQueue
-    const completed = toggleQueue.toggle(task);
-    updateTasks(current => current.map(t => t._id === id ? { ...t, completed } : t));
-    // Completing cancels the reminder; un-completing brings it back if it is still due
-    reminders.sync({ ...task, completed });
+  const showFailedChanges = () => {
+    const count = status.failed.length === 1 ? 'a change' : `${status.failed.length} changes`;
+    const reasons = [...new Set(status.failed.map(op => op.error))].join('\n');
+    Alert.alert(
+      'Could not sync',
+      `The server did not accept ${count}:\n\n${reasons}`,
+      [
+        { text: 'Close', style: 'cancel' },
+        { text: 'Retry', onPress: retryFailed },
+        { text: 'Discard', style: 'destructive', onPress: discardFailed }
+      ]
+    );
   };
 
-  const handleDeleteTask = async (id: string) => {
-    const taskToDelete = tasksRef.current.find(t => t._id === id);
-    if (!taskToDelete || deleting.has(id)) return;
-    deleting.add(id);
-    updateTasks(current => current.filter(t => t._id !== id));
-    const done = tracker.begin();
-    // Cancel while we still hold the task (and its notification id)
-    reminders.cancel(taskToDelete);
-    try {
-      await deleteTask(id);
-    } catch (error: any) {
-      console.error('Error deleting task', error);
-      if (unmounted.current) return;
-      updateTasks(current => current.some(t => t._id === id) ? current : [...current, taskToDelete]); // rollback
-      reminders.sync(taskToDelete);
-      Alert.alert('Error', 'Failed to delete the task. Please try again.');
-    } finally {
-      deleting.delete(id);
-      done();
-    }
-  };
+  // Shown only when there is something to say; fully synced shows nothing
+  const waiting = status.pending > 0 ? ` · ${status.pending} pending` : '';
+  const syncLabel =
+    !status.online ? `Offline${waiting}`
+    : status.problem === 'auth' ? 'Sign in again to sync'
+    : status.problem === 'error' && status.pending > 0 ? `Waiting to sync${waiting}`
+    : null;
+  const editingTask = editingId ? tasks.find(t => t.clientId === editingId) : undefined;
+  // Nothing saved on this device yet and the first answer has not arrived
+  const showSkeleton = isLoading || (!status.synced && status.syncing && tasks.length === 0);
 
   const selectedDateStr = toLocalDateString(date);
-  const todayStr = toLocalDateString();
+  const todayStr = today;
   
   const currentDayTasks = tasks.filter(t => t.date === selectedDateStr);
   
@@ -362,23 +248,40 @@ export default function TodoScreen() {
             resizeMode="contain"
           />
           <Text className="text-2xl font-bold tracking-tight text-foreground">Todo</Text>
+          {syncLabel ? (
+            <View className="flex-row items-center ml-3">
+              <CloudOff size={12} color={isDark ? '#94a3b8' : '#64748b'} />
+              <Text className="text-xs text-muted-foreground ml-1">{syncLabel}</Text>
+            </View>
+          ) : showSpinner ? (
+            <ActivityIndicator size="small" color={isDark ? '#94a3b8' : '#64748b'} style={{ marginLeft: 12 }} />
+          ) : null}
         </View>
         <View className="flex-row gap-2">
           <Pressable onPress={toggleColorScheme} className="bg-muted w-10 h-10 rounded-full items-center justify-center">
             {isDark ? <Sun size={20} color="#e2e8f0" /> : <Moon size={20} color="#0f172a" />}
           </Pressable>
-          <Pressable onPress={signOut} className="bg-muted w-10 h-10 rounded-full items-center justify-center">
+          <Pressable onPress={handleSignOut} className="bg-muted w-10 h-10 rounded-full items-center justify-center">
             <LogOut size={20} color={isDark ? '#e2e8f0' : '#0f172a'} />
           </Pressable>
         </View>
       </View>
 
+      {status.failed.length > 0 && (
+        <Pressable onPress={showFailedChanges} className="flex-row items-center px-4 py-2 bg-muted border-b border-border">
+          <AlertCircle size={14} color={isDark ? '#fca5a5' : '#b91c1c'} />
+          <Text className="text-xs text-foreground ml-2">
+            {status.failed.length === 1 ? '1 change' : `${status.failed.length} changes`} could not be synced
+          </Text>
+        </Pressable>
+      )}
+
       <FlatList
         className="flex-1 px-4 pt-4"
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
-        data={isLoading ? [1, 2, 3, 4] : currentDayTasks}
-        keyExtractor={(item, index) => isLoading ? `skeleton-${index}` : item._id}
+        data={(showSkeleton ? [1, 2, 3, 4] : currentDayTasks) as any[]}
+        keyExtractor={(item: any, index) => showSkeleton ? `skeleton-${index}` : item.clientId}
         ListHeaderComponent={
           <View className="mb-6">
             <Animated.View style={{ transform: [{ translateX: headerTranslateX }] }} className="mb-8 mt-4">
@@ -548,7 +451,7 @@ export default function TodoScreen() {
         }
         renderItem={({ item }) => (
           <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
-            {isLoading ? (
+            {showSkeleton ? (
               <View className="flex-row items-center bg-card p-4 rounded-2xl mb-3 border border-border">
                 <View className="w-6 h-6 rounded-md bg-muted animate-pulse mr-3" />
                 <View className="flex-1">
@@ -560,14 +463,16 @@ export default function TodoScreen() {
             ) : (
               <TaskItem 
                 task={item} 
-                onToggle={() => toggleTaskCompletion(item._id)}
-                onDelete={() => handleDeleteTask(item._id)}
+                pending={pending.has(item.clientId)}
+                onToggle={() => toggleTask(item.clientId)}
+                onEdit={() => setEditingId(item.clientId)}
+                onDelete={() => deleteTask(item.clientId)}
               />
             )}
           </Animated.View>
         )}
         ListEmptyComponent={
-          !isLoading ? (
+          !showSkeleton ? (
             <Animated.View style={{ transform: [{ translateX: listTranslateX }] }}>
               <Text className="text-center text-muted-foreground mt-8">No tasks for this day.</Text>
             </Animated.View>
@@ -614,6 +519,17 @@ export default function TodoScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {editingTask && (
+        <EditTaskModal
+          task={editingTask}
+          onSave={(changes) => {
+            editTask(editingTask.clientId, changes);
+            setEditingId(null);
+          }}
+          onClose={() => setEditingId(null)}
+        />
+      )}
     </KeyboardAvoidingView>
   );
 }

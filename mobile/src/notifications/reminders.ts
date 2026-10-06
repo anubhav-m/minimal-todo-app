@@ -4,7 +4,9 @@ import { parse } from 'date-fns';
 // can run under `npm test`; the native calls are injected (see reminderApi.ts).
 
 export interface ReminderTask {
-  _id: string;
+  // The id every device knows the task by. A task made offline has no _id yet.
+  clientId?: string;
+  _id?: string;
   text: string;
   date: string; // yyyy-MM-dd
   time?: string | null; // h:mm a
@@ -37,6 +39,9 @@ export const getReminderDate = (task: ReminderTask): Date | null => {
   const parsed = parse(`${task.date} ${task.time}`, 'yyyy-MM-dd h:mm a', new Date());
   return isNaN(parsed.getTime()) ? null : parsed;
 };
+
+// Reminders scheduled by earlier builds carry the server's _id instead of the clientId
+const taskKey = (task: ReminderTask) => task.clientId ?? task._id;
 
 const wantsReminder = (task: ReminderTask) => !task.completed && !!task.notify && !!task.time;
 
@@ -72,7 +77,7 @@ export const syncTaskReminder = async (
       identifier: task.notificationId,
       title: 'Todo Reminder',
       body: task.text,
-      data: { taskId: task._id, fireAt: fireAt.getTime() },
+      data: { taskId: taskKey(task), fireAt: fireAt.getTime() },
       date: fireAt,
     });
     return true;
@@ -126,7 +131,11 @@ export const reconcileReminders = async (
     return [];
   }
 
-  const tasksById = new Map(tasks.map(t => [t._id, t]));
+  const tasksById = new Map<string, ReminderTask>();
+  for (const task of tasks) {
+    if (task._id) tasksById.set(task._id, task);
+    if (task.clientId) tasksById.set(task.clientId, task);
+  }
   const cancelled: string[] = [];
 
   for (const reminder of scheduled) {

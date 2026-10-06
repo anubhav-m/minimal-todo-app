@@ -23,7 +23,7 @@ export const getTasks = async (req, res, next) => {
       await markRolledOver({ User, user, today: rolledOver ? today : null, timezone: newTimezone });
     }
 
-    const tasks = await Task.find({ userId: user._id }).sort({ date: 1 });
+    const tasks = await Task.find({ userId: user._id, deletedAt: null }).sort({ date: 1 });
     res.json(tasks);
   } catch (error) {
     next(error);
@@ -44,9 +44,10 @@ export const createTask = async (req, res, next) => {
 
     const idempotencyKey = typeof clientId === 'string' && clientId ? clientId : undefined;
 
-    const task = new Task({
-      userId: user._id,
-      clientId: idempotencyKey,
+    const task = new Task({ userId: user._id });
+    task.set({
+      // Every task has a clientId: it is the id the sync protocol knows it by
+      clientId: idempotencyKey ?? String(task._id),
       text,
       date,
       time: time || null,
@@ -62,6 +63,8 @@ export const createTask = async (req, res, next) => {
       if (error?.code !== DUPLICATE_KEY || !idempotencyKey) throw error;
       const existing = await Task.findOne({ userId: user._id, clientId: idempotencyKey });
       if (!existing) throw error;
+      // Created and since deleted: a retry must not bring it back
+      if (existing.deletedAt) throw new ApiError(404, 'Task not found');
       return res.status(200).json(existing);
     }
     res.status(201).json(task);
@@ -86,7 +89,7 @@ export const updateTask = async (req, res, next) => {
       if (req.body[field] !== undefined) changes[field] = req.body[field];
     }
 
-    const filter = { _id: req.params.id, userId: user._id };
+    const filter = { _id: req.params.id, userId: user._id, deletedAt: null };
     // Optimistic concurrency: only apply on top of the version the client last saw.
     // Tasks saved before `version` existed have no field, which reads as 0.
     if (baseVersion !== undefined) filter.version = baseVersion === 0 ? { $in: [0, null] } : baseVersion;
@@ -98,7 +101,7 @@ export const updateTask = async (req, res, next) => {
     );
 
     if (!task) {
-      const current = baseVersion === undefined ? null : await Task.findOne({ _id: req.params.id, userId: user._id });
+      const current = baseVersion === undefined ? null : await Task.findOne({ _id: req.params.id, userId: user._id, deletedAt: null });
       if (!current) throw new ApiError(404, 'Task not found');
       return res.status(409).json({ success: false, error: 'Task was changed elsewhere', task: current });
     }
@@ -114,7 +117,11 @@ export const deleteTask = async (req, res, next) => {
     const user = await User.findOne({ googleId });
     if (!user) throw new ApiError(404, 'User not found');
 
-    const task = await Task.findOneAndDelete({ _id: req.params.id, userId: user._id });
+    // Soft delete: the tombstone is what tells other devices, and stops a late edit reviving it
+    const task = await Task.findOneAndUpdate(
+      { _id: req.params.id, userId: user._id, deletedAt: null },
+      { $set: { deletedAt: new Date() }, $inc: { version: 1 } }
+    );
     if (!task) throw new ApiError(404, 'Task not found');
     
     res.json({ message: 'Task deleted successfully' });

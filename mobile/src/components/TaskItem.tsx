@@ -1,23 +1,25 @@
 import React from 'react';
 import { View, Text, Pressable, Alert, Vibration } from 'react-native';
 import Checkbox from 'expo-checkbox';
-import { Clock, Bell, BellOff } from 'lucide-react-native'; 
+import { Clock, Bell, BellOff, CloudOff } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 
 interface TaskItemProps {
   task: {
-    _id: string;
     text: string;
     priority?: string;
     time?: string | null;
     notify?: boolean;
     completed: boolean;
   };
+  // Has changes the server has not confirmed yet
+  pending?: boolean;
   onToggle: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }
 
-export default function TaskItem({ task, onToggle, onDelete }: TaskItemProps) {
+export default function TaskItem({ task, pending, onToggle, onEdit, onDelete }: TaskItemProps) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -26,10 +28,11 @@ export default function TaskItem({ task, onToggle, onDelete }: TaskItemProps) {
   const handleLongPress = () => {
     Vibration.vibrate(50);
     Alert.alert(
-      "Delete Task",
-      "Are you sure you want to permanently delete this task?",
+      task.text,
+      undefined,
       [
         { text: "Cancel", style: "cancel" },
+        { text: "Edit", onPress: onEdit },
         { text: "Delete", style: "destructive", onPress: onDelete }
       ]
     );
@@ -84,6 +87,12 @@ export default function TaskItem({ task, onToggle, onDelete }: TaskItemProps) {
             </View>
           )}
         </View>
+
+        {pending && (
+          <View className="justify-center pl-3" accessibilityLabel="Waiting to sync">
+            <CloudOff size={14} color={isDark ? '#64748b' : '#94a3b8'} />
+          </View>
+        )}
       </Pressable>
     </View>
   );

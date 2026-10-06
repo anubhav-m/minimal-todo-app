@@ -3,6 +3,7 @@ import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { authenticate } from '../api/api';
+import { TOKEN_KEY, clearSession, loadStoredUser, storeSession } from '../auth/session';
 
 interface User {
   name: string;
@@ -36,51 +37,40 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const checkToken = async () => {
     try {
-      const token = await AsyncStorage.getItem('todo_token');
-      
-      if (token) {
-        // Just verify if Google still considers us signed in natively
-        let userInfo = null;
-        try {
-          userInfo = GoogleSignin.getCurrentUser();
-        } catch (e) {
-          // ignore
-        }
+      // Signed in before: open straight away, with or without a connection.
+      // The access token is refreshed when a request actually needs it.
+      const stored = await loadStoredUser();
+      if (stored) {
+        setUser(stored);
+        return;
+      }
 
-        // If we have a local token and Google still knows who we are, restore session
-        if (userInfo) {
-          try {
-            const tokens = await GoogleSignin.getTokens();
-            await AsyncStorage.setItem('todo_token', tokens.accessToken);
-          } catch (e) {
-            console.error('Failed to refresh tokens', e);
-          }
-          setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
-          setIsLoading(false);
-          return;
-        } else {
-          // If getCurrentUser is null, try silent sign in to restore the session
-          try {
+      // Signed in on a build that did not keep the profile: restore it through Google once
+      const token = await AsyncStorage.getItem(TOKEN_KEY);
+      if (token) {
+        try {
+          let account = GoogleSignin.getCurrentUser()?.user;
+          if (!account) {
             const silent = await GoogleSignin.signInSilently();
-            if (silent.type === 'success') {
-              const tokens = await GoogleSignin.getTokens();
-              await AsyncStorage.setItem('todo_token', tokens.accessToken);
-              setUser({ name: silent.data.user.name || 'User', email: silent.data.user.email });
-              setIsLoading(false);
-              return;
-            }
-          } catch (e) {
-            // silent sign in failed
+            if (silent.type === 'success') account = silent.data.user;
           }
+          if (account) {
+            const restored = { name: account.name || 'User', email: account.email };
+            const tokens = await GoogleSignin.getTokens().catch(() => null);
+            await storeSession(restored, tokens?.accessToken ?? token);
+            setUser(restored);
+            return;
+          }
+        } catch (e) {
+          // silent sign in failed
         }
       }
-      
+
       // If we are here, we are not signed in
-      await AsyncStorage.removeItem('todo_token');
+      await clearSession();
       setUser(null);
     } catch (error) {
       console.error('Error checking token:', error);
-      await AsyncStorage.removeItem('todo_token');
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -96,8 +86,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       
       if (tokens.accessToken) {
         const res = await authenticate(tokens.accessToken);
-        await AsyncStorage.setItem('todo_token', tokens.accessToken);
-        setUser(res.user);
+        const signedIn = { name: res.user.name, email: res.user.email, picture: res.user.picture };
+        await storeSession(signedIn, tokens.accessToken);
+        setUser(signedIn);
       }
     } catch (error: any) {
       console.error('Raw Login Error:', error);
@@ -118,13 +109,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    // Google's sign-out needs the network; leaving this device must not
     try {
       await GoogleSignin.signOut();
-      await AsyncStorage.removeItem('todo_token');
-      setUser(null);
     } catch (error) {
       console.error('Sign out error:', error);
     }
+    await clearSession().catch(() => {});
+    setUser(null);
   };
 
   return (
