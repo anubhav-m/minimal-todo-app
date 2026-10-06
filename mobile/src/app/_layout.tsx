@@ -1,7 +1,6 @@
 import { Stack } from 'expo-router';
 import { AuthProvider } from '../context/AuthContext';
 import { useColorScheme } from 'nativewind';
-import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 
 import '../global.css';

@@ -62,5 +62,3 @@ function LoginScreen() {
     </View>
   );
 }
-
-// Real TodoScreen is imported at the top

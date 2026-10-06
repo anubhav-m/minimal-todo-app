@@ -1,7 +1,6 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// In a real app, you would use an environment variable (e.g., EXPO_PUBLIC_API_URL)
 // For local development on Android emulator, 10.0.2.2 points to localhost of the host machine
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:5000/api';
 
@@ -47,5 +46,3 @@ export const deleteTask = async (id: string) => {
   const response = await api.delete(`/tasks/${id}`);
   return response.data;
 };
-
-export default api;

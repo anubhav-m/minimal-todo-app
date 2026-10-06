@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, Pressable, Alert, Vibration } from 'react-native';
 import Checkbox from 'expo-checkbox';
-import { Clock, Flag, Bell, BellOff } from 'lucide-react-native'; 
+import { Clock, Bell, BellOff } from 'lucide-react-native'; 
 import { useColorScheme } from 'nativewind';
 
 interface TaskItemProps {

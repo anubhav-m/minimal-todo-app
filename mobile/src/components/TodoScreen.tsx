@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Switch, Alert, PanResponder, Animated, Dimensions } from 'react-native';
+import { View, Text, TextInput, Pressable, FlatList, KeyboardAvoidingView, Platform, Modal, Image, Alert, PanResponder, Animated, Dimensions } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as Notifications from 'expo-notifications';
@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { getTasks, createTask, updateTask, deleteTask } from '../api/api';
 import TaskItem from './TaskItem';
 import PrioritySelector from './PrioritySelector';
-import { LogOut, Calendar as CalendarIcon, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { LogOut, Moon, Sun, Bell, BellOff, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { useColorScheme } from 'nativewind';
 
 Notifications.setNotificationHandler({
@@ -21,7 +21,7 @@ Notifications.setNotificationHandler({
 });
 
 export default function TodoScreen() {
-  const { signOut, user } = useAuth();
+  const { signOut } = useAuth();
   const { colorScheme, toggleColorScheme } = useColorScheme();
   const [date, setDate] = useState(new Date());
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
@@ -124,10 +124,8 @@ export default function TodoScreen() {
       }
 
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
       if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
+        await Notifications.requestPermissionsAsync();
       }
     })();
   }, []);
@@ -150,9 +148,7 @@ export default function TodoScreen() {
 
     const dateStr = format(date, 'yyyy-MM-dd');
     const timeStr = newTaskTime ? format(newTaskTime, 'h:mm a') : null;
-    const tempId = Date.now().toString();
     const tempTask = { 
-      _id: tempId, 
       text: newTaskText, 
       date: dateStr, 
       time: timeStr,
