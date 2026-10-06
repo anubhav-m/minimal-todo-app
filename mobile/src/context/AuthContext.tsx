@@ -61,11 +61,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } else {
           // If getCurrentUser is null, try silent sign in to restore the session
           try {
-            userInfo = await GoogleSignin.signInSilently();
-            if (userInfo) {
+            const silent = await GoogleSignin.signInSilently();
+            if (silent.type === 'success') {
               const tokens = await GoogleSignin.getTokens();
               await AsyncStorage.setItem('todo_token', tokens.accessToken);
-              setUser({ name: userInfo.user.name || 'User', email: userInfo.user.email });
+              setUser({ name: silent.data.user.name || 'User', email: silent.data.user.email });
               setIsLoading(false);
               return;
             }

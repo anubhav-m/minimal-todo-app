@@ -7,7 +7,7 @@ interface TaskListProps {
   isLoading: boolean;
   tasks: any[];
   selectedDateStr: string;
-  onToggleCompletion: (id: string, completed: boolean) => void;
+  onToggleCompletion: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
@@ -50,7 +50,7 @@ export function TaskList({
               <Checkbox
                 id={`task-${task._id}`}
                 checked={task.completed}
-                onCheckedChange={() => onToggleCompletion(task._id, task.completed)}
+                onCheckedChange={() => onToggleCompletion(task._id)}
               />
               <span className={`${task.completed ? 'line-through text-muted-foreground' : ''}`}>
                 {task.text}
